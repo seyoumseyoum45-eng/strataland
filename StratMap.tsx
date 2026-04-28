@@ -1,512 +1,272 @@
 'use client';
+// ─────────────────────────────────────────────────────────────
+// StratMap — Leaflet map, client-only, no SSR, no markercluster
+// Fixes:
+//   1. Hydration  — component only mounts after client render
+//   2. Double-init — initDone ref prevents second L.map() call
+//   3. Cluster    — removed; plain L.layerGroup used instead
+// ─────────────────────────────────────────────────────────────
+import { useEffect, useRef, useState } from 'react';
+import type { Deposit } from '@/types';
 
-// =============================================================
-// STRATALAND — StratMap Component
-// Leaflet + OpenStreetMap + Natural Earth GeoJSON boundaries
-// PostGIS-backed deposit markers with clustering
-//
-// Dependencies (install via npm):
-//   leaflet ^1.9
-//   leaflet.markercluster ^1.5
-//   @types/leaflet
-// =============================================================
-
-import { useEffect, useRef, useCallback } from 'react';
-import type { Map as LMap, LayerGroup, GeoJSON as LGeoJSON } from 'leaflet';
-import type { DepositGeoJSON, DepositFeatureProperties, MapFilters } from '@/types';
-
-// ── Constants ─────────────────────────────────────────────────
-
-const OSM_TILE_URL   = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-const OSM_TILE_ATTR  = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors';
-
-// Stamen Toner Lite — cleaner dark alternative (no API key)
-const DARK_TILE_URL  = 'https://stamen-tiles-{s}.a.ssl.fastly.net/toner-background/{z}/{x}/{y}.png';
-const DARK_TILE_ATTR = 'Map tiles by <a href="http://stamen.com">Stamen Design</a>, under CC BY 3.0. Data &copy; OpenStreetMap contributors';
-
-// Natural Earth GeoJSON — low-res world boundaries (~250KB, hosted on public CDN)
-const NATURAL_EARTH_URL =
-  'https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson';
-
-// Graticule grid definition
-const GRATICULE_LATS = [-90, -60, -30, 0, 30, 60, 90];
-const GRATICULE_LONS = [-180, -120, -60, 0, 60, 120, 180];
-
-// Deposit status → border color for marker ring
-const STATUS_RING: Record<string, string> = {
-  producing:          '#10b981',
-  past_producing:     '#f59e0b',
-  undeveloped:        '#64748b',
-  exploration:        '#3b82f6',
-  feasibility:        '#8b5cf6',
-  construction:       '#f97316',
-  care_and_maintenance:'#94a3b8',
-  unknown:            '#334155',
-};
-
-// Marker pixel sizes by resource magnitude
-const MARKER_SIZES: Record<string, number> = {
-  xl: 18,
-  lg: 14,
-  md: 10,
-  sm:  7,
-};
-
-// ── Props ─────────────────────────────────────────────────────
-
-interface StratMapProps {
-  /** GeoJSON from /api/deposits/geojson */
-  geojson: DepositGeoJSON | null;
-  /** Currently selected deposit id */
-  selectedId?: string | null;
-  /** Called when user clicks a deposit marker */
-  onDepositSelect?: (id: string) => void;
-  /** Active filters — used to re-fetch/filter client-side */
-  filters?: Partial<MapFilters>;
-  /** Map theme */
-  theme?: 'dark' | 'light';
-  /** Initial map centre */
-  center?: [number, number];
-  /** Initial zoom level */
-  zoom?: number;
-  className?: string;
+interface Props {
+  deposits: Deposit[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
 }
 
-// ── Component ─────────────────────────────────────────────────
+const STATUS_RING: Record<string, string> = {
+  producing: '#10b981', past_producing: '#f59e0b',
+  undeveloped: '#64748b', exploration: '#3b82f6',
+  feasibility: '#8b5cf6', construction: '#f97316',
+  care_and_maintenance: '#94a3b8', unknown: '#334155',
+};
 
-export default function StratMap({
-  geojson,
-  selectedId,
-  onDepositSelect,
-  filters,
-  theme = 'dark',
-  center = [20, 10],
-  zoom = 3,
-  className = '',
-}: StratMapProps) {
-  const containerRef   = useRef<HTMLDivElement>(null);
-  const mapRef         = useRef<LMap | null>(null);
-  const markersRef     = useRef<any>(null);   // MarkerClusterGroup
-  const countriesRef   = useRef<LGeoJSON | null>(null);
-  const graticuleRef   = useRef<LayerGroup | null>(null);
-  const tileLayerRef   = useRef<any>(null);
+function resourceLabel(t: number | null): string {
+  if (!t) return '—';
+  if (t >= 1e9) return `${(t / 1e9).toFixed(1)} Bt`;
+  return `${(t / 1e6).toFixed(0)} Mt`;
+}
 
-  // ── Build SVG marker HTML ──────────────────────────────────
-  const buildMarkerIcon = useCallback(
-    (props: DepositFeatureProperties, isSelected: boolean) => {
-      const L = (window as any).L as typeof import('leaflet');
-      const size  = MARKER_SIZES[props.marker_size] ?? 10;
-      const ring  = STATUS_RING[props.status]  ?? '#64748b';
-      const fill  = props.mineral_color        ?? '#64748b';
-      const glow  = isSelected ? `box-shadow:0 0 0 3px ${fill}55,0 0 12px ${fill}88;` : '';
-      const scale = isSelected ? 'transform:scale(1.5);' : '';
-      const total = size + 8; // total div size including ring padding
+function markerRadius(t: number | null): number {
+  if (!t) return 6;
+  if (t > 5e9) return 11;
+  if (t > 1e9) return 9;
+  if (t > 2e8) return 7;
+  return 6;
+}
 
-      const html = `
-        <div style="
-          width:${total}px;height:${total}px;
-          border-radius:50%;
-          border:1.5px solid ${ring};
-          display:flex;align-items:center;justify-content:center;
-          background:rgba(10,12,15,0.7);
-          transition:transform .15s,box-shadow .15s;
-          ${glow}${scale}
-        ">
-          <div style="
-            width:${size}px;height:${size}px;
-            border-radius:50%;
-            background:${fill};
-          "></div>
-        </div>
-      `;
+// Inject Leaflet CSS once into <head> without dynamic import
+// (avoids the CSS import race condition that causes hydration mismatch)
+function ensureLeafletCSS() {
+  const id = 'leaflet-css';
+  if (document.getElementById(id)) return;
+  const link = document.createElement('link');
+  link.id = id;
+  link.rel = 'stylesheet';
+  link.href = 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css';
+  document.head.appendChild(link);
+}
 
-      return L.divIcon({
-        html,
-        className: '',
-        iconSize:   [total, total],
-        iconAnchor: [total / 2, total / 2],
-        popupAnchor:[0, -(total / 2)],
-      });
-    },
-    []
-  );
+function ensureAppCSS() {
+  const id = 'strataland-map-css';
+  if (document.getElementById(id)) return;
+  const s = document.createElement('style');
+  s.id = id;
+  s.textContent = `
+    .leaflet-container { background: #0b0e12 !important; font-family: 'SF Mono', monospace; }
+    .leaflet-popup-content-wrapper { background: transparent !important; border: none !important; padding: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+    .leaflet-popup-content { margin: 0 !important; }
+    .leaflet-popup-tip-container { display: none !important; }
+    .leaflet-control-attribution { background: rgba(11,14,18,0.8) !important; color: #50606f !important; font-size: 9px !important; }
+    .leaflet-control-attribution a { color: #50606f !important; }
+    .leaflet-control-zoom a { background: #12161c !important; color: #8e99a8 !important; border-color: rgba(255,255,255,0.1) !important; }
+    .leaflet-control-zoom a:hover { background: #1e2633 !important; color: #10b981 !important; }
+    .strataland-marker-wrap { cursor: pointer; }
+  `;
+  document.head.appendChild(s);
+}
 
-  // ── Build popup HTML ───────────────────────────────────────
-  const buildPopup = useCallback((props: DepositFeatureProperties): string => {
-    const ring  = STATUS_RING[props.status] ?? '#64748b';
-    const fill  = props.mineral_color       ?? '#64748b';
-    const confColor = props.data_confidence === 'high'
-      ? '#10b981' : props.data_confidence === 'medium' ? '#f59e0b' : '#ef4444';
+export default function StratMap({ deposits, selectedId, onSelect }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const mapRef       = useRef<any>(null);
+  const markerLayerRef = useRef<any>(null);  // plain L.layerGroup — no clustering
+  const leafletRef   = useRef<any>(null);
+  const initDone     = useRef(false);        // extra guard against double-init
 
-    const statusLabel = props.status.replace(/_/g, ' ').toUpperCase();
-    const confLabel   = props.data_confidence.toUpperCase();
+  // ── Fix 1: only render the container div on the client ──────
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
 
-    const secondaryHTML = props.secondary_minerals?.length
-      ? `<div style="margin-top:6px;font-size:9px;color:#5c6670;">
-           Also: ${props.secondary_minerals.slice(0, 4).join(' · ')}
-         </div>`
-      : '';
-
-    const flagHTML = props.flags?.length
-      ? `<div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:3px;">
-           ${props.flags.slice(0,3).map(f =>
-             `<span style="font-size:8px;padding:1px 5px;border-radius:2px;background:rgba(255,255,255,0.06);color:#9aa3af;letter-spacing:.3px;">${f.replace(/_/g,' ')}</span>`
-           ).join('')}
-         </div>`
-      : '';
-
-    return `
-      <div style="
-        font-family:'SF Mono',Consolas,monospace;
-        background:#111418;
-        border:1px solid rgba(255,255,255,0.1);
-        border-radius:4px;
-        padding:12px 14px;
-        min-width:220px;
-        color:#e8eaed;
-      ">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <div style="width:10px;height:10px;border-radius:50%;background:${fill};flex-shrink:0;"></div>
-          <div style="font-size:13px;font-weight:600;letter-spacing:.3px;line-height:1.2;">${props.name}</div>
-        </div>
-
-        <div style="font-size:10px;color:#cd7c3f;margin-bottom:8px;letter-spacing:.3px;">
-          ▶ ${props.country}${props.region ? ` · ${props.region}` : ''}
-        </div>
-
-        <table style="width:100%;border-collapse:collapse;font-size:10px;">
-          <tr>
-            <td style="color:#5c6670;padding:3px 0;letter-spacing:.4px;">PRIMARY MINERAL</td>
-            <td style="text-align:right;color:#e8eaed;font-weight:500;">${props.primary_mineral}</td>
-          </tr>
-          <tr>
-            <td style="color:#5c6670;padding:3px 0;letter-spacing:.4px;">TYPE</td>
-            <td style="text-align:right;color:#9aa3af;">${props.deposit_type}</td>
-          </tr>
-          <tr>
-            <td style="color:#5c6670;padding:3px 0;letter-spacing:.4px;">STATUS</td>
-            <td style="text-align:right;">
-              <span style="font-size:9px;font-weight:700;letter-spacing:.5px;color:${ring};background:${ring}22;padding:1px 6px;border-radius:2px;">${statusLabel}</span>
-            </td>
-          </tr>
-          <tr>
-            <td style="color:#5c6670;padding:3px 0;letter-spacing:.4px;">RESOURCE</td>
-            <td style="text-align:right;color:#9aa3af;">${props.resource_size_label}</td>
-          </tr>
-        </table>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0;">
-          <div style="background:#161b21;border:1px solid rgba(255,255,255,0.07);padding:6px;border-radius:3px;">
-            <div style="font-size:8px;color:#5c6670;letter-spacing:.5px;margin-bottom:2px;">OPPORTUNITY</div>
-            <div style="font-size:16px;font-weight:700;color:#10b981;">${props.opportunity_score ?? '—'}</div>
-          </div>
-          <div style="background:#161b21;border:1px solid rgba(255,255,255,0.07);padding:6px;border-radius:3px;">
-            <div style="font-size:8px;color:#5c6670;letter-spacing:.5px;margin-bottom:2px;">DIFFICULTY</div>
-            <div style="font-size:16px;font-weight:700;color:#f59e0b;">${props.difficulty_score ?? '—'}</div>
-          </div>
-        </div>
-
-        <div style="display:flex;align-items:center;justify-content:space-between;font-size:9px;color:#5c6670;">
-          <span>DATA CONFIDENCE: <strong style="color:${confColor}">${confLabel}</strong></span>
-          <span>${props.source_count} source${props.source_count !== 1 ? 's' : ''}</span>
-        </div>
-
-        ${secondaryHTML}
-        ${flagHTML}
-
-        <div style="margin-top:10px;padding-top:8px;border-top:1px solid rgba(255,255,255,0.06);">
-          <button
-            onclick="window.strataSelectDeposit('${props.id}')"
-            style="
-              width:100%;padding:6px;
-              background:rgba(16,185,129,0.1);
-              border:1px solid #059669;
-              color:#10b981;
-              font-family:inherit;font-size:10px;
-              letter-spacing:.5px;border-radius:3px;
-              cursor:pointer;
-            "
-          >VIEW FULL DEPOSIT ▶</button>
-        </div>
-      </div>
-    `;
-  }, []);
-
-  // ── Initialise Leaflet once ────────────────────────────────
+  // ── Initialise map exactly once ──────────────────────────────
   useEffect(() => {
-    if (typeof window === 'undefined' || mapRef.current) return;
+    if (!mounted) return;
+    if (initDone.current) return;          // Fix 2: hard guard
+    if (!containerRef.current) return;
 
-    // Leaflet must be loaded client-side
-    Promise.all([
-      import('leaflet'),
-      // @ts-ignore — no typings for clustering plugin
-      import('leaflet.markercluster'),
-    ]).then(([L]) => {
-      if (!containerRef.current || mapRef.current) return;
+    initDone.current = true;
 
-      // Fix default icon path for Next.js bundling
-      delete (L.Icon.Default.prototype as any)._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon-2x.png',
-        iconUrl:       'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png',
-        shadowUrl:     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
-      });
+    const initMap = async () => {
+      ensureLeafletCSS();
+      ensureAppCSS();
 
-      // ── Create map ──────────────────────────────────────────
+      // Dynamic import — Leaflet must never run on the server
+      const L = (await import('leaflet')).default ?? (await import('leaflet'));
+      leafletRef.current = L;
+
+      // Safety: if Leaflet somehow already attached to this node, bail
+      if ((containerRef.current as any)._leaflet_id) return;
+
       const map = L.map(containerRef.current!, {
-        center,
-        zoom,
+        center: [20, 15],
+        zoom: 3,
         zoomControl: false,
-        attributionControl: false,
-        preferCanvas: true,        // better perf for 10k+ markers
+        attributionControl: true,
+        minZoom: 2,
+        maxZoom: 18,
         worldCopyJump: true,
-        maxBoundsViscosity: 0.8,
       });
-
       mapRef.current = map;
 
-      // ── Tile layer ──────────────────────────────────────────
-      const tileUrl  = theme === 'dark' ? DARK_TILE_URL  : OSM_TILE_URL;
-      const tileAttr = theme === 'dark' ? DARK_TILE_ATTR : OSM_TILE_ATTR;
+      // Carto Dark Matter — real dark world basemap, no API key needed
+      L.tileLayer(
+        'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+        {
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+          subdomains: 'abcd',
+          maxZoom: 19,
+        }
+      ).addTo(map);
 
-      tileLayerRef.current = L.tileLayer(tileUrl, {
-        attribution: tileAttr,
-        maxZoom: 18,
-        opacity: theme === 'dark' ? 0.55 : 0.8,
-        className: 'strataland-tiles',
-      }).addTo(map);
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-      // ── Attribution (minimal) ───────────────────────────────
-      L.control.attribution({ position: 'bottomright', prefix: '' }).addTo(map);
+      // Natural Earth country outlines (TopoJSON → GeoJSON via topojson-client)
+      try {
+        const [topoRes, { feature }] = await Promise.all([
+          fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'),
+          import('topojson-client'),
+        ]);
+        const topology = await topoRes.json();
+        const geojson = feature(topology, topology.objects.countries);
+        L.geoJSON(geojson as any, {
+          style: { color: 'rgba(148,163,184,0.35)', weight: 0.5, fill: false },
+        }).addTo(map);
+      } catch {
+        // Network unavailable — map tiles still work
+      }
 
-      // ── Zoom control (custom position) ─────────────────────
-      L.control.zoom({ position: 'topright' }).addTo(map);
+      // Graticule
+      const graticule = L.layerGroup().addTo(map);
+      const gridStyle = { color: 'rgba(255,255,255,0.06)', weight: 0.5 };
+      const mainStyle = { color: 'rgba(255,255,255,0.2)',  weight: 0.8 };
 
-      // ── Natural Earth country boundaries ───────────────────
-      fetch(NATURAL_EARTH_URL)
-        .then((r) => r.json())
-        .then((worldGeoJSON) => {
-          countriesRef.current = L.geoJSON(worldGeoJSON, {
-            style: {
-              color:       theme === 'dark' ? 'rgba(100,116,139,0.55)' : 'rgba(100,116,139,0.4)',
-              weight:      0.6,
-              fillColor:   theme === 'dark' ? '#1a2030' : '#e8eaed',
-              fillOpacity: theme === 'dark' ? 0.85 : 0.3,
-              opacity:     1,
-            },
-          }).addTo(map);
-        })
-        .catch((err) => console.error('[StratMap] Failed to load Natural Earth GeoJSON:', err));
-
-      // ── Graticule (lat/lon grid) ────────────────────────────
-      const graticuleGroup = L.layerGroup().addTo(map);
-      graticuleRef.current = graticuleGroup;
-
-      const gridStyle = {
-        color:    'rgba(255,255,255,0.06)',
-        weight:   0.5,
-        opacity:  1,
-        dashArray: undefined as any,
-      };
-      const equatorStyle  = { ...gridStyle, color: 'rgba(255,255,255,0.18)', weight: 1 };
-      const meridianStyle = { ...gridStyle, color: 'rgba(255,255,255,0.18)', weight: 1 };
-
-      // Latitude lines (horizontal)
-      GRATICULE_LATS.forEach((lat) => {
-        const style = lat === 0 ? equatorStyle : gridStyle;
-        L.polyline([
-          [lat, -180],
-          [lat,  180],
-        ], style).addTo(graticuleGroup);
-
-        // Equator label
+      [-90, -60, -30, 0, 30, 60, 90].forEach(lat => {
+        L.polyline([[lat, -180], [lat, 180]], lat === 0 ? mainStyle : gridStyle).addTo(graticule);
         if (lat === 0) {
-          L.marker([lat + 1.5, -175], {
-            icon: L.divIcon({
-              html: `<span style="font-family:'SF Mono',monospace;font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:.8px;white-space:nowrap;">EQUATOR</span>`,
-              className: '',
-              iconAnchor: [0, 0],
-            }),
-            interactive: false,
-          }).addTo(graticuleGroup);
-        }
-
-        // Latitude degree label
-        const label = lat === 0 ? '' : `${Math.abs(lat)}°${lat > 0 ? 'N' : 'S'}`;
-        if (label) {
-          L.marker([lat, -178], {
-            icon: L.divIcon({
-              html: `<span style="font-family:'SF Mono',monospace;font-size:8px;color:rgba(255,255,255,0.22);white-space:nowrap;">${label}</span>`,
-              className: '',
-              iconAnchor: [0, 6],
-            }),
-            interactive: false,
-          }).addTo(graticuleGroup);
+          L.marker([2, -175], { icon: L.divIcon({ html: `<span style="font-family:'SF Mono',monospace;font-size:9px;color:rgba(255,255,255,0.45);letter-spacing:.8px;white-space:nowrap;text-shadow:0 1px 3px #000">EQUATOR</span>`, className: '', iconAnchor: [0, 0] as any }), interactive: false }).addTo(graticule);
+        } else {
+          L.marker([lat, -178], { icon: L.divIcon({ html: `<span style="font-family:'SF Mono',monospace;font-size:8px;color:rgba(255,255,255,0.3);white-space:nowrap;text-shadow:0 1px 2px #000">${Math.abs(lat)}°${lat > 0 ? 'N' : 'S'}</span>`, className: '', iconAnchor: [0, 7] as any }), interactive: false }).addTo(graticule);
         }
       });
-
-      // Longitude lines (vertical)
-      GRATICULE_LONS.forEach((lon) => {
-        const style = lon === 0 ? meridianStyle : gridStyle;
-        L.polyline([
-          [-90, lon],
-          [ 90, lon],
-        ], style).addTo(graticuleGroup);
-
-        // Prime Meridian label
+      [-180, -120, -60, 0, 60, 120, 180].forEach(lon => {
+        L.polyline([[-90, lon], [90, lon]], lon === 0 ? mainStyle : gridStyle).addTo(graticule);
         if (lon === 0) {
-          L.marker([82, lon + 1], {
-            icon: L.divIcon({
-              html: `<span style="font-family:'SF Mono',monospace;font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:.8px;white-space:nowrap;">PRIME MERIDIAN</span>`,
-              className: '',
-              iconAnchor: [0, 0],
-            }),
-            interactive: false,
-          }).addTo(graticuleGroup);
-        }
-
-        // Longitude degree label
-        const label = lon === 0 ? '' : `${Math.abs(lon)}°${lon > 0 ? 'E' : 'W'}`;
-        if (label) {
-          L.marker([-87, lon], {
-            icon: L.divIcon({
-              html: `<span style="font-family:'SF Mono',monospace;font-size:8px;color:rgba(255,255,255,0.22);white-space:nowrap;">${label}</span>`,
-              className: '',
-              iconAnchor: [12, 0],
-            }),
-            interactive: false,
-          }).addTo(graticuleGroup);
+          L.marker([80, 1], { icon: L.divIcon({ html: `<span style="font-family:'SF Mono',monospace;font-size:9px;color:rgba(255,255,255,0.45);letter-spacing:.6px;white-space:nowrap;text-shadow:0 1px 3px #000">PRIME MERIDIAN</span>`, className: '', iconAnchor: [0, 0] as any }), interactive: false }).addTo(graticule);
+        } else {
+          L.marker([-85, lon], { icon: L.divIcon({ html: `<span style="font-family:'SF Mono',monospace;font-size:8px;color:rgba(255,255,255,0.3);white-space:nowrap;text-shadow:0 1px 2px #000">${Math.abs(lon)}°${lon > 0 ? 'E' : 'W'}</span>`, className: '', iconAnchor: [16, 0] as any }), interactive: false }).addTo(graticule);
         }
       });
 
-      // ── Marker cluster group ────────────────────────────────
-      const clusterGroup = (L as any).markerClusterGroup({
-        maxClusterRadius: 50,
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: false,
-        zoomToBoundsOnClick: true,
-        disableClusteringAtZoom: 8,
+      // Fix 3: plain layerGroup — no markerClusterGroup
+      const markerLayer = L.layerGroup().addTo(map);
+      markerLayerRef.current = markerLayer;
+    };
 
-        // Custom cluster icon — matches StrataLand dark theme
-        iconCreateFunction: (cluster: any) => {
-          const count = cluster.getChildCount();
-          const size  = count > 100 ? 44 : count > 20 ? 36 : 28;
-          return L.divIcon({
-            html: `
-              <div style="
-                width:${size}px;height:${size}px;border-radius:50%;
-                background:rgba(16,185,129,0.15);
-                border:1px solid rgba(16,185,129,0.5);
-                display:flex;align-items:center;justify-content:center;
-                font-family:'SF Mono',monospace;font-size:${size < 36 ? 9 : 11}px;
-                color:#10b981;font-weight:700;
-              ">${count}</div>
-            `,
-            className: '',
-            iconSize: [size, size],
-            iconAnchor: [size / 2, size / 2],
-          });
-        },
-      });
-
-      markersRef.current = clusterGroup;
-      map.addLayer(clusterGroup);
-
-      // ── Global callback for popup button ───────────────────
-      (window as any).strataSelectDeposit = (id: string) => {
-        map.closePopup();
-        onDepositSelect?.(id);
-      };
-    });
+    initMap().catch(console.error);
 
     return () => {
-      mapRef.current?.remove();
-      mapRef.current = null;
-      markersRef.current = null;
+      // Full teardown on unmount — prevents the "already initialized" error
+      // if React StrictMode double-invokes effects in development
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      markerLayerRef.current = null;
+      leafletRef.current = null;
+      initDone.current = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mounted]);
 
-  // ── Sync deposit markers when geojson changes ──────────────
+  // ── Redraw markers whenever deposits or selectedId changes ───
   useEffect(() => {
-    if (!mapRef.current || !markersRef.current || !geojson) return;
+    const L     = leafletRef.current;
+    const layer = markerLayerRef.current;
+    if (!L || !layer) return;
 
-    const L = (window as any).L as typeof import('leaflet');
-    if (!L) return;
+    layer.clearLayers();
 
-    markersRef.current.clearLayers();
+    deposits.forEach(dep => {
+      const ring  = STATUS_RING[dep.status] || '#64748b';
+      const fill  = dep.mineral_color || '#64748b';
+      const r     = markerRadius(dep.resource_size_tonnes);
+      const isSel = dep.id === selectedId;
+      const outer = r + 4;
+      const total = outer * 2 + 4;
 
-    geojson.features.forEach((feature) => {
-      const { properties: props } = feature;
-      const [lon, lat] = feature.geometry.coordinates;
+      const icon = L.divIcon({
+        html: `<div style="width:${total}px;height:${total}px;display:flex;align-items:center;justify-content:center;">
+          <div style="width:${outer*2}px;height:${outer*2}px;border-radius:50%;border:${isSel?'2':'1'}px solid ${ring};background:rgba(11,14,18,${isSel?'0.9':'0.6'});display:flex;align-items:center;justify-content:center;${isSel?`box-shadow:0 0 0 3px ${fill}30;`:''}">
+            <div style="width:${r*2}px;height:${r*2}px;border-radius:50%;background:${fill};${isSel?'transform:scale(1.2);':''}"></div>
+          </div>
+        </div>`,
+        className:   'strataland-marker-wrap',
+        iconSize:    [total, total],
+        iconAnchor:  [total / 2, total / 2],
+        popupAnchor: [0, -(total / 2) - 4],
+      });
 
-      const isSelected = props.id === selectedId;
-      const icon = buildMarkerIcon(props, isSelected);
-      const popup = L.popup({
-        className:   'strataland-popup',
-        maxWidth:    280,
-        closeButton: false,
-        offset:      [0, -5],
-      }).setContent(buildPopup(props));
+      const confColor  = dep.data_confidence === 'high' ? '#10b981' : dep.data_confidence === 'medium' ? '#f59e0b' : '#ef4444';
+      const statusLabel = dep.status.replace(/_/g, ' ').toUpperCase();
 
-      const marker = L.marker([lat, lon], { icon })
-        .bindPopup(popup)
-        .on('click', () => {
-          onDepositSelect?.(props.id);
-        });
+      const popup = `
+        <div style="font-family:'SF Mono',monospace;background:#111418;border:1px solid rgba(255,255,255,0.1);border-radius:4px;padding:12px 14px;min-width:230px;max-width:260px;color:#e4e8ed;font-size:11px;">
+          <div style="display:flex;align-items:flex-start;gap:8px;margin-bottom:8px;">
+            <div style="width:9px;height:9px;border-radius:50%;background:${fill};flex-shrink:0;margin-top:2px;"></div>
+            <div style="font-size:13px;font-weight:700;line-height:1.3;">${dep.name}</div>
+          </div>
+          <div style="font-size:10px;color:#cd7c3f;margin-bottom:8px;">▶ ${dep.country}${dep.region ? ` · ${dep.region}` : ''}</div>
+          <table style="width:100%;border-collapse:collapse;">
+            <tr><td style="color:#50606f;padding:3px 0;font-size:9px;">MINERAL</td><td style="text-align:right;color:#e4e8ed;font-weight:700;font-size:10px;">${dep.primary_mineral}</td></tr>
+            <tr><td style="color:#50606f;padding:3px 0;font-size:9px;">TYPE</td><td style="text-align:right;color:#8e99a8;font-size:10px;">${dep.deposit_type}</td></tr>
+            <tr><td style="color:#50606f;padding:3px 0;font-size:9px;">STATUS</td><td style="text-align:right;"><span style="font-size:8px;font-weight:700;color:${ring};background:${ring}22;padding:1px 5px;border-radius:2px;">${statusLabel}</span></td></tr>
+            <tr><td style="color:#50606f;padding:3px 0;font-size:9px;">RESOURCE</td><td style="text-align:right;color:#8e99a8;font-size:10px;">${resourceLabel(dep.resource_size_tonnes)}</td></tr>
+          </table>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:5px;margin:8px 0;">
+            <div style="background:#161b21;border:1px solid rgba(255,255,255,0.07);padding:5px;border-radius:2px;text-align:center;"><div style="font-size:7px;color:#50606f;">OPP</div><div style="font-size:15px;font-weight:700;color:#10b981;">${dep.opportunity_score}</div></div>
+            <div style="background:#161b21;border:1px solid rgba(255,255,255,0.07);padding:5px;border-radius:2px;text-align:center;"><div style="font-size:7px;color:#50606f;">DIFF</div><div style="font-size:15px;font-weight:700;color:#f59e0b;">${dep.difficulty_score}</div></div>
+            <div style="background:#161b21;border:1px solid rgba(255,255,255,0.07);padding:5px;border-radius:2px;text-align:center;"><div style="font-size:7px;color:#50606f;">CONF</div><div style="font-size:11px;font-weight:700;color:${confColor};">${dep.data_confidence.slice(0,3).toUpperCase()}</div></div>
+          </div>
+          <button onclick="window.__strataSelect('${dep.id}')" style="width:100%;padding:6px;background:rgba(16,185,129,0.1);border:1px solid #059669;color:#10b981;font-family:'SF Mono',monospace;font-size:9px;letter-spacing:.5px;border-radius:2px;cursor:pointer;">VIEW FULL INTELLIGENCE ▶</button>
+        </div>`;
 
-      markersRef.current.addLayer(marker);
+      L.marker([dep.latitude, dep.longitude], { icon })
+        .bindPopup(L.popup({ className: 'strataland-popup', closeButton: false, maxWidth: 280, offset: [0, -6] }).setContent(popup))
+        .on('click', () => onSelect(dep.id))
+        .addTo(layer);
     });
-  }, [geojson, selectedId, buildMarkerIcon, buildPopup, onDepositSelect]);
 
-  // ── Pan to selected deposit ────────────────────────────────
+    (window as any).__strataSelect = (id: string) => {
+      mapRef.current?.closePopup();
+      onSelect(id);
+    };
+  }, [deposits, selectedId, onSelect]);
+
+  // ── Fly to selected deposit ──────────────────────────────────
   useEffect(() => {
-    if (!mapRef.current || !selectedId || !geojson) return;
-    const feature = geojson.features.find(
-      (f) => f.properties.id === selectedId
+    if (!mapRef.current || !selectedId) return;
+    const dep = deposits.find(d => d.id === selectedId);
+    if (!dep) return;
+    mapRef.current.flyTo(
+      [dep.latitude, dep.longitude],
+      Math.max(mapRef.current.getZoom(), 5),
+      { duration: 0.9 }
     );
-    if (!feature) return;
-    const [lon, lat] = feature.geometry.coordinates;
-    mapRef.current.setView([lat, lon], Math.max(mapRef.current.getZoom(), 6), {
-      animate: true,
-      duration: 0.8,
-    });
-  }, [selectedId, geojson]);
+  }, [selectedId, deposits]);
 
-  // ── CSS injected once ──────────────────────────────────────
-  useEffect(() => {
-    const id = 'strataland-map-styles';
-    if (document.getElementById(id)) return;
-    const style = document.createElement('style');
-    style.id = id;
-    style.textContent = `
-      .strataland-tiles { filter: brightness(0.65) saturate(0.3) hue-rotate(190deg); }
-      .strataland-popup .leaflet-popup-content-wrapper {
-        background: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-      }
-      .strataland-popup .leaflet-popup-content { margin: 0 !important; }
-      .strataland-popup .leaflet-popup-tip-container { display: none; }
-      .leaflet-container { background: #0a0c0f; cursor: crosshair; }
-      .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large {
-        background: transparent !important;
-      }
-      .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div {
-        background: transparent !important;
-      }
-    `;
-    document.head.appendChild(style);
-  }, []);
+  // ── Fix 1 cont: don't render the div at all until client-side
+  if (!mounted) {
+    return (
+      <div style={{ width: '100%', height: '100%', background: '#0b0e12', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'monospace', fontSize: 11, color: '#50606f', letterSpacing: 1 }}>
+        LOADING MAP...
+      </div>
+    );
+  }
 
   return (
     <div
       ref={containerRef}
-      className={`strataland-map-root ${className}`}
-      style={{ width: '100%', height: '100%', background: '#0a0c0f' }}
+      style={{ width: '100%', height: '100%', background: '#0b0e12' }}
       aria-label="StrataLand global mineral deposit map"
-      role="application"
     />
   );
 }

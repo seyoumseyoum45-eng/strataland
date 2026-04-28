@@ -1,32 +1,27 @@
 {
-  "name": "strataland-frontend",
+  "name": "strataland",
   "version": "1.0.0",
-  "description": "StrataLand Critical Minerals Intelligence Platform — Frontend",
   "private": true,
   "scripts": {
-    "dev":   "next dev",
+    "dev": "next dev -p 3008",
     "build": "next build",
-    "start": "next start",
-    "lint":  "next lint",
-    "type-check": "tsc --noEmit"
+    "start": "next start -p 3008"
   },
   "dependencies": {
-    "next":    "14.2.x",
-    "react":   "18.3.x",
-    "react-dom": "18.3.x",
+    "next": "14.2.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "leaflet": "^1.9.4",
-    "leaflet.markercluster": "^1.5.3",
-    "pg":      "^8.12.0",
-    "geojson": "^0.5.0"
+    "topojson-client": "^3.1.0",
+    "pg": "^8.12.0"
   },
   "devDependencies": {
-    "@types/node":    "^20",
-    "@types/react":   "^18",
+    "@types/node": "^20",
+    "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/leaflet": "^1.9.12",
-    "@types/leaflet.markercluster": "^1.5.4",
-    "@types/pg":      "^8.11.6",
-    "@types/geojson": "^7946.0.14",
-    "typescript":     "^5.4.5"
+    "@types/topojson-client": "^3.1.4",
+    "@types/pg": "^8.11.6",
+    "typescript": "^5"
   }
 }
