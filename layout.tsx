@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import './globals.css';
 
 export const metadata: Metadata = {
   title: 'STRATALAND — Critical Minerals Intelligence',
@@ -9,7 +10,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <head />
-      <body style={{ margin: 0, padding: 0, overflow: 'hidden', background: '#0b0e12' }}>
+      <body>
         {children}
       </body>
     </html>

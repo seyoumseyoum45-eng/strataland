@@ -1,20 +1,20 @@
 import type { Deposit, KPIs, Mineral } from '../types';
 
 export const MINERALS: Mineral[] = [
-  { symbol:'Li',  name:'Lithium',      display_color:'#10b981', iea_critical:true },
-  { symbol:'Cu',  name:'Copper',       display_color:'#cd7c3f', iea_critical:true },
-  { symbol:'Co',  name:'Cobalt',       display_color:'#3b82f6', iea_critical:true },
-  { symbol:'Ni',  name:'Nickel',       display_color:'#14b8a6', iea_critical:true },
-  { symbol:'REE', name:'Rare Earths',  display_color:'#8b5cf6', iea_critical:true },
-  { symbol:'U',   name:'Uranium',      display_color:'#f59e0b', iea_critical:false },
-  { symbol:'C',   name:'Graphite',     display_color:'#64748b', iea_critical:true },
-  { symbol:'Mn',  name:'Manganese',    display_color:'#ef4444', iea_critical:true },
+  { symbol:'Li',  name:'Lithium',      display_color:'#25f5a6', iea_critical:true },
+  { symbol:'Cu',  name:'Copper',       display_color:'#ff7a22', iea_critical:true },
+  { symbol:'Co',  name:'Cobalt',       display_color:'#3f8cff', iea_critical:true },
+  { symbol:'Ni',  name:'Nickel',       display_color:'#27d8b2', iea_critical:true },
+  { symbol:'REE', name:'Rare Earths',  display_color:'#a855f7', iea_critical:true },
+  { symbol:'U',   name:'Uranium',      display_color:'#f6b93b', iea_critical:false },
+  { symbol:'C',   name:'Graphite',     display_color:'#94a3b8', iea_critical:true },
+  { symbol:'Mn',  name:'Manganese',    display_color:'#22d3ee', iea_critical:true },
 ];
 
 export const MINERAL_COLOR: Record<string,string> = {
-  Lithium:'#10b981', Copper:'#cd7c3f', Cobalt:'#3b82f6',
-  Nickel:'#14b8a6', 'Rare Earths':'#8b5cf6', Uranium:'#f59e0b',
-  Graphite:'#64748b', Manganese:'#ef4444',
+  Lithium:'#25f5a6', Copper:'#ff7a22', Cobalt:'#3f8cff',
+  Nickel:'#27d8b2', 'Rare Earths':'#a855f7', Uranium:'#f6b93b',
+  Graphite:'#94a3b8', Manganese:'#22d3ee', Tantalum:'#ffffff',
 };
 
 export const DEPOSITS: Deposit[] = [
@@ -44,6 +44,7 @@ export const DEPOSITS: Deposit[] = [
   { id:'dk',  name:'Danakhil Potash Project',       country:'Ethiopia',        region:'Afar Region',       latitude:13.4667,  longitude:40.6167,  primary_mineral:'Uranium',    secondary_minerals:['Potash','Borate'],         deposit_type:'Evaporite Basin',     status:'exploration', development_stage:'feasibility',  resource_size_tonnes:11000000000,grade_percent:32.0,  grade_unit:'% K₂O',   owner:'Circum Minerals (contested)', operator:'Circum Minerals',       opportunity_score:65, difficulty_score:85, underutilization_score:90, infrastructure_score:18, country_risk_score:80, environmental_risk_score:60, data_confidence:'low',    mineral_color:'#f59e0b', source_count:3,  paleo_setting:'Afar Rift System — Neogene extensional rift evaporite, Danakil Depression -120m', ai_summary:"Enormous high-grade potash deposit. Danakil Depression — hottest inhabited place on Earth. Tigray conflict 2020-2022 disrupted operations. Ownership contested.", flags:['extreme_environment','conflict_affected','data_gap'] },
   { id:'sb',  name:'Sossego-Sequeirinho',           country:'Brazil',          region:'Pará State',        latitude:-6.3667,  longitude:-50.6833, primary_mineral:'Copper',     secondary_minerals:['Gold'],                    deposit_type:'IOCG',                status:'producing',   development_stage:'production',   resource_size_tonnes:890000000,  grade_percent:0.72,  grade_unit:'%',       owner:'Vale S.A.',                 operator:'Vale S.A.',               opportunity_score:74, difficulty_score:45, underutilization_score:35, infrastructure_score:68, country_risk_score:35, environmental_risk_score:45, data_confidence:'high',   mineral_color:'#cd7c3f', source_count:6,  paleo_setting:'Carajás Domain IOCG system — Archean Amazon Craton', ai_summary:"Vale's primary copper mine in Carajás. IOCG system with Au byproduct. Significant infrastructure investment in remote Amazon region.", flags:[] },
   { id:'lo',  name:'Lohia Nickel Belt',             country:'Indonesia',       region:'Sulawesi',          latitude:-2.5000,  longitude:121.5000, primary_mineral:'Nickel',     secondary_minerals:['Cobalt'],                  deposit_type:'Laterite',            status:'producing',   development_stage:'production',   resource_size_tonnes:800000000,  grade_percent:1.1,   grade_unit:'% Ni',    owner:'Vale Indonesia / Nickel Industries', operator:'Multiple',     opportunity_score:76, difficulty_score:48, underutilization_score:40, infrastructure_score:55, country_risk_score:45, environmental_risk_score:65, data_confidence:'medium', mineral_color:'#14b8a6', source_count:5,  paleo_setting:'Ophiolite-hosted laterite profile, Sulawesi ophiolite belt', ai_summary:"Indonesia holds world's largest nickel reserves. Sulawesi laterite operations support EV supply chain. Processing HPAL plants under development.", flags:['ev_supply_chain','nickel_critical'] },
+  { id:'ken', name:'Kenticha Lithium-Tantalum',     country:'Ethiopia',        region:'Oromia Region',     latitude:5.5800,   longitude:39.7300,  primary_mineral:'Lithium',    secondary_minerals:['Tantalum'],                deposit_type:'LCT Pegmatite',       status:'exploration', development_stage:'feasibility',  resource_size_tonnes:45000000,   grade_percent:1.08,  grade_unit:'% Li₂O',  owner:'EMDSC (state)',             operator:'Ethiopian Min. Dev. Corp', opportunity_score:70, difficulty_score:63, underutilization_score:82, infrastructure_score:32, country_risk_score:65, environmental_risk_score:42, data_confidence:'medium', mineral_color:'#25f5a6', source_count:4,  paleo_setting:'Mozambique Belt Neoproterozoic pegmatite province — East African Orogen, collision-related LCT pegmatites', ai_summary:"Pegmatite-hosted lithium and tantalum potential offers regional growth optionality. Infrastructure, resource definition, and financing depth will determine development velocity.", flags:['underutilized','east_africa','regional_growth'] },
 ];
 
 export function computeKPIs(deposits: Deposit[]): KPIs {

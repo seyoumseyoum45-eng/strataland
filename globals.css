@@ -1,0 +1,146 @@
+/* STRATALAND — Intelligence Command Center Theme */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-deep:     #02070d;
+  --bg-ocean:    #03111a;
+  --bg-base:     #071018;
+  --bg-surface:  #0b1520;
+  --bg-panel:    #0e1a24;
+  --bg-hover:    #122030;
+  --border:      rgba(255,255,255,0.06);
+  --border-c:    rgba(0,234,255,0.18);
+  --cyan:        #00eaff;
+  --cyan-dim:    rgba(0,234,255,0.5);
+  --cyan-glow:   rgba(0,234,255,0.08);
+  --text-1:      #e2e8f0;
+  --text-2:      #94a3b8;
+  --text-3:      #475569;
+  --text-4:      #1e3a4a;
+  /* Exact mineral colors per spec */
+  --li:  #25f5a6;
+  --cu:  #ff7a22;
+  --co:  #3f8cff;
+  --ni:  #27d8b2;
+  --ree: #a855f7;
+  --ur:  #f6b93b;
+  --gr:  #94a3b8;
+  --mn:  #22d3ee;
+  --ta:  #ffffff;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-deep);
+  color: var(--text-1);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,234,255,0.18); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,234,255,0.32); }
+
+/* Selection */
+::selection { background: rgba(0,234,255,0.2); color: #fff; }
+
+/* Leaflet base */
+.leaflet-container {
+  background: #02070d !important;
+  font-family: 'Inter', sans-serif !important;
+  cursor: crosshair !important;
+}
+
+/* Tile layer: shift Carto Dark Matter toward deep ocean navy */
+.leaflet-tile-pane {
+  filter: hue-rotate(170deg) saturate(1.35) brightness(0.80) contrast(1.08);
+}
+
+/* Popups */
+.leaflet-popup-content-wrapper {
+  background: transparent !important;
+  border: none !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+.leaflet-popup-content { margin: 0 !important; }
+.leaflet-popup-tip-container { display: none !important; }
+
+/* Attribution */
+.leaflet-control-attribution {
+  background: rgba(2,7,13,0.88) !important;
+  color: #1e3a4a !important;
+  font-size: 9px !important;
+  padding: 2px 8px !important;
+  border-top: 1px solid rgba(0,234,255,0.08) !important;
+}
+.leaflet-control-attribution a { color: #1e3a4a !important; }
+
+/* Zoom control */
+.leaflet-control-zoom {
+  border: 1px solid rgba(0,234,255,0.2) !important;
+  border-radius: 10px !important;
+  overflow: hidden !important;
+  margin-bottom: 16px !important;
+  margin-right: 14px !important;
+  box-shadow: 0 0 16px rgba(0,234,255,0.06) !important;
+}
+.leaflet-control-zoom a {
+  background: #071018 !important;
+  color: #00eaff !important;
+  border-color: rgba(0,234,255,0.1) !important;
+  width: 34px !important;
+  height: 34px !important;
+  line-height: 34px !important;
+  font-size: 20px !important;
+  font-weight: 300 !important;
+  transition: background .15s !important;
+}
+.leaflet-control-zoom a:hover {
+  background: rgba(0,234,255,0.1) !important;
+  color: #fff !important;
+}
+
+/* Marker base */
+.radar-marker-wrap {
+  overflow: visible !important;
+  cursor: pointer !important;
+  background: transparent !important;
+}
+
+/* Radar pulse keyframes */
+@keyframes radarPulse {
+  0%   { transform: scale(1);   opacity: 0.75; }
+  75%  { transform: scale(3.8); opacity: 0;    }
+  100% { transform: scale(3.8); opacity: 0;    }
+}
+@keyframes radarPulse2 {
+  0%   { transform: scale(1);   opacity: 0.5; }
+  75%  { transform: scale(2.5); opacity: 0;   }
+  100% { transform: scale(2.5); opacity: 0;   }
+}
+@keyframes coreBlink {
+  0%, 100% { opacity: 1;   transform: scale(1);    }
+  50%       { opacity: 0.7; transform: scale(0.94); }
+}
+@keyframes selGlow {
+  0%, 100% { box-shadow: var(--sel-glow-a); }
+  50%       { box-shadow: var(--sel-glow-b); }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}
+
+.rp-ring1 { animation: radarPulse  2.2s cubic-bezier(0, 0.55, 0.45, 1) infinite; transform-origin: center; }
+.rp-ring2 { animation: radarPulse2 2.2s cubic-bezier(0, 0.55, 0.45, 1) 0.85s infinite; transform-origin: center; }
+.rp-core  { animation: coreBlink 2.6s ease-in-out infinite; }
+.rp-sel   { animation: selGlow   1.8s ease-in-out infinite; }
