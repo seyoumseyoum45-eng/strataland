@@ -50,3 +50,63 @@ export interface Mineral {
   display_color: string;
   iea_critical: boolean;
 }
+
+export type DepositSummary = Deposit & {
+  last_updated?: string;
+};
+
+export type DepositDetail = DepositSummary & {
+  alternate_names?: string[];
+  locality?: string | null;
+  elevation_m?: number | null;
+  area_km2?: number | null;
+  secondary_mineral_ids?: string[];
+  production_start_year?: number | null;
+  production_end_year?: number | null;
+  discovery_year?: number | null;
+  resource_standard?: string | null;
+  reserve_size_tonnes?: number | null;
+  contained_metal_tonnes?: number | null;
+  resource_category?: string | null;
+  resource_year?: number | null;
+  ownership_structure?: Record<string, number> | null;
+  infrastructure_notes?: string | null;
+  permitting_status?: string | null;
+  political_risk_notes?: string | null;
+  environmental_notes?: string | null;
+  permitting_notes?: string | null;
+  data_confidence_notes?: string | null;
+  analyst_notes?: string | null;
+};
+
+export interface DepositFeatureProperties
+  extends Pick<
+    DepositSummary,
+    | 'id' | 'name' | 'country' | 'region' | 'primary_mineral'
+    | 'secondary_minerals' | 'deposit_type' | 'status'
+    | 'opportunity_score' | 'difficulty_score' | 'underutilization_score'
+    | 'data_confidence' | 'mineral_color' | 'source_count' | 'flags'
+  > {
+  resource_size_label?: string;
+  grade_label?: string;
+  marker_size?: 'sm' | 'md' | 'lg' | 'xl';
+}
+
+export interface DepositGeoJSON {
+  type: 'FeatureCollection';
+  features: Array<{
+    type: 'Feature';
+    geometry: { type: 'Point'; coordinates: [number, number] };
+    properties: DepositFeatureProperties;
+  }>;
+}
+
+export interface MapFilters {
+  minerals: string[];
+  statuses: DepositStatus[];
+  min_opportunity: number;
+  max_difficulty: number;
+  data_confidence?: DataConfidence[];
+  countries?: string[];
+  bbox?: [number, number, number, number] | null;
+}

@@ -21,53 +21,6 @@ const MINERAL_COLORS: Record<string,string> = {
   'Graphite':'#94a3b8', 'Manganese':'#22d3ee', 'Tantalum':'#ffffff',
 };
 
-const CONFIDENCE_RANK: Record<string, number> = { high: 3, medium: 2, low: 1, unknown: 0 };
-const DRC_ALIASES = new Set(['drc', 'dr congo', 'democratic republic of congo', 'congo drc', 'rdc']);
-
-function normalizeText(value: unknown): string {
-  return String(value ?? '').toLowerCase().trim();
-}
-
-function depositMatchesSearch(dep: Deposit, rawQuery: string): boolean {
-  const q = normalizeText(rawQuery);
-  if (!q) return true;
-
-  const country = normalizeText(dep.country);
-  const searchable = [
-    dep.name,
-    dep.country,
-    dep.region,
-    dep.primary_mineral,
-    dep.secondary_minerals.join(' '),
-    dep.operator,
-    dep.owner,
-  ].map(normalizeText);
-
-  return (
-    searchable.some(value => value.includes(q)) ||
-    (DRC_ALIASES.has(q) && (country === 'dr congo' || country.includes('democratic republic')))
-  );
-}
-
-function depositMatchesMineral(dep: Deposit, mineral: string): boolean {
-  return dep.primary_mineral === mineral || dep.secondary_minerals.includes(mineral);
-}
-
-function rankDeposits(deposits: Deposit[]): Deposit[] {
-  return [...deposits].sort((a, b) => {
-    const opportunity = b.opportunity_score - a.opportunity_score;
-    if (opportunity !== 0) return opportunity;
-
-    const difficulty = a.difficulty_score - b.difficulty_score;
-    if (difficulty !== 0) return difficulty;
-
-    const confidence = (CONFIDENCE_RANK[b.data_confidence] ?? 0) - (CONFIDENCE_RANK[a.data_confidence] ?? 0);
-    if (confidence !== 0) return confidence;
-
-    return a.name.localeCompare(b.name);
-  });
-}
-
 // ── Sidebar nav items ─────────────────────────────────────────
 const NAV = [
   { section:'PLATFORM', items:[
@@ -170,49 +123,121 @@ function GlobeIcon() {
 // ── Main App Shell (client-only, loaded with ssr:false from page.tsx) ─────
 export default function AppShell() {
   // No mounted guard needed — this component is never server-rendered.
-  // It is loaded exclusively on the client via dynamic import ssr:false in page.tsx.
-  const [activePage, setActivePage]     = useState('map');
-  const [selectedId, setSelectedId]     = useState<string | null>('ken');
-  const [selectedDep, setSelectedDep]   = useState<Deposit | null>(
+
+  // ── Constants (must be declared before any useMemo/useEffect that uses them) ──
+  const YEAR_MIN = 2010;
+  const YEAR_MAX = 2024;
+
+  // ── Core UI state ──────────────────────────────────────────────
+  const [activePage, setActivePage]       = useState('map');
+  const [selectedId, setSelectedId]       = useState<string | null>('ken');
+  const [selectedDep, setSelectedDep]     = useState<Deposit | null>(
     DEPOSITS.find(d => d.id === 'ken') || null
   );
-  const [searchQ, setSearchQ]           = useState('');
+  const [searchQ, setSearchQ]             = useState('');
   const [activeMineral, setActiveMineral] = useState<string|null>(null);
   const [africaFilter, setAfricaFilter]   = useState(false);
+  const [sortBy, setSortBy]               = useState<'opp'|'diff'|'conf'|'default'>('default');
   const mapFlyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
 
+  // ── Timeline state (declared before filtered so useMemo can reference it) ──
+  const [timelineYear, setTimelineYear] = useState<number>(YEAR_MAX);
+  const [isPlaying, setIsPlaying]       = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Watchlist — persisted to localStorage ─────────────────────
+  // Safe: AppShell is ssr:false, so localStorage is always available here.
+  const [watchlistIds, setWatchlistIds] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem('strataland_watchlist');
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch { return []; }
+  });
+
+  // Persist watchlist to localStorage on every change.
+  useEffect(() => {
+    try { localStorage.setItem('strataland_watchlist', JSON.stringify(watchlistIds)); }
+    catch { /* storage unavailable — silent */ }
+  }, [watchlistIds]);
+
+  const toggleWatchlist = useCallback((id: string) => {
+    setWatchlistIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+    );
+  }, []);
+
+  // Derive full Deposit objects for watchlist items, preserving add-order.
+  const watchlistDeposits = useMemo(() =>
+    watchlistIds.map(id => DEPOSITS.find(d => d.id === id)).filter(Boolean) as Deposit[],
+  [watchlistIds]);
+
+  // ── Keep selectedDep in sync with selectedId ──────────────────
   useEffect(() => {
     if (!selectedId) { setSelectedDep(null); return; }
     setSelectedDep(DEPOSITS.find(d => d.id === selectedId) || null);
   }, [selectedId]);
 
+  // ── Filtered + sorted deposit list ────────────────────────────
+  // All state variables used here (timelineYear, YEAR_MAX, sortBy, etc.)
+  // must be declared above this useMemo.
   const filtered = useMemo(() => {
     let d = [...DEPOSITS];
-    if (searchQ) d = d.filter(x => depositMatchesSearch(x, searchQ));
-    if (activeMineral) d = d.filter(x => depositMatchesMineral(x, activeMineral));
+
+    // Search: name, country, region, primary_mineral, secondary_minerals, operator, owner
+    if (searchQ) {
+      const q = searchQ.toLowerCase();
+      d = d.filter(x =>
+        x.name.toLowerCase().includes(q) ||
+        x.country.toLowerCase().includes(q) ||
+        x.primary_mineral.toLowerCase().includes(q) ||
+        (x.region || '').toLowerCase().includes(q) ||
+        (x.operator || '').toLowerCase().includes(q) ||
+        (x.owner || '').toLowerCase().includes(q) ||
+        x.secondary_minerals.some(s => s.toLowerCase().includes(q))
+      );
+    }
+    if (activeMineral) d = d.filter(x => x.primary_mineral === activeMineral);
     if (africaFilter)  d = d.filter(x => isAfrica(x));
-    return rankDeposits(d);
-  }, [searchQ, activeMineral, africaFilter]);
+    if (timelineYear < YEAR_MAX) d = d.filter(x => x.last_updated_year <= timelineYear);
 
+    if (sortBy === 'opp')  d = [...d].sort((a, b) => b.opportunity_score - a.opportunity_score);
+    if (sortBy === 'diff') d = [...d].sort((a, b) => a.difficulty_score  - b.difficulty_score);
+    if (sortBy === 'conf') {
+      const rank = { high: 0, medium: 1, low: 2, unknown: 3 };
+      d = [...d].sort((a, b) => rank[a.data_confidence] - rank[b.data_confidence]);
+    }
+    return d;
+  }, [searchQ, activeMineral, africaFilter, sortBy, timelineYear]);
+
+  // If the selected deposit is filtered out, advance to first visible deposit.
   useEffect(() => {
-    if (!filtered.length) {
-      if (selectedId !== null) setSelectedId(null);
-      return;
-    }
-
-    if (!selectedId || !filtered.some(dep => dep.id === selectedId)) {
-      setSelectedId(filtered[0].id);
-    }
+    if (!filtered.length) { setSelectedId(null); return; }
+    if (!selectedId) { setSelectedId(filtered[0].id); return; }
+    const stillVisible = filtered.some(d => d.id === selectedId);
+    if (!stillVisible) setSelectedId(filtered[0].id);
   }, [filtered, selectedId]);
 
-  const kpis = useMemo(() => computeKPIs(filtered), [filtered]);
+  const kpis    = useMemo(() => computeKPIs(filtered), [filtered]);
   const allKpis = useMemo(() => computeKPIs(DEPOSITS), []);
 
-  // Debug: confirm local data is loaded
+  // Debug log
   useEffect(() => {
     console.log('Loading local deposits dataset');
     console.log('Deposits loaded:', DEPOSITS.length);
   }, []);
+
+  // ── Playback interval ─────────────────────────────────────────
+  useEffect(() => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
+    if (!isPlaying) return;
+    intervalRef.current = setInterval(() => {
+      setTimelineYear(prev => {
+        if (prev >= YEAR_MAX) { setIsPlaying(false); return YEAR_MAX; }
+        return prev + 1;
+      });
+    }, 1000);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, [isPlaying]);
 
   const handleNav = useCallback((id: string) => {
     setActivePage(id);
@@ -316,10 +341,34 @@ export default function AppShell() {
           );
         })}
         <button style={{ padding:'5px 12px', borderRadius:20, fontSize:12, border:'1px solid rgba(0,234,255,0.12)', background:'#0e1621', color:'#475569', cursor:'pointer', flexShrink:0, fontFamily:'Inter,sans-serif' }}>+ More</button>
-        {/* Active filter indicator */}
-        {(africaFilter || activeMineral || searchQ) && (
+
+        {/* Sort control */}
+        <div style={{ width:1, height:20, background:'rgba(255,255,255,0.08)', flexShrink:0, marginLeft:4 }}/>
+        <span style={{ fontSize:10, color:'#334155', flexShrink:0, letterSpacing:.5 }}>SORT:</span>
+        {([
+          ['default', 'Default'],
+          ['opp',     '↑ Opportunity'],
+          ['diff',    '↓ Difficulty'],
+          ['conf',    '↑ Confidence'],
+        ] as const).map(([val, label]) => (
           <button
-            onClick={() => { setAfricaFilter(false); setActiveMineral(null); setSearchQ(''); }}
+            key={val}
+            onClick={() => setSortBy(val)}
+            style={{
+              padding:'4px 11px', borderRadius:20, fontSize:11, fontWeight:500,
+              border: sortBy === val ? '1px solid rgba(0,234,255,0.5)' : '1px solid rgba(0,234,255,0.1)',
+              background: sortBy === val ? 'rgba(0,234,255,0.12)' : '#0e1621',
+              color: sortBy === val ? '#00eaff' : '#475569',
+              cursor:'pointer', whiteSpace:'nowrap', flexShrink:0, transition:'all .12s',
+              fontFamily:'Inter,sans-serif',
+            }}
+          >{label}</button>
+        ))}
+
+        {/* Active filter indicator */}
+        {(africaFilter || activeMineral || searchQ || sortBy !== 'default') && (
+          <button
+            onClick={() => { setAfricaFilter(false); setActiveMineral(null); setSearchQ(''); setSortBy('default'); }}
             style={{ padding:'5px 10px', borderRadius:20, fontSize:11, border:'1px solid rgba(255,100,100,0.3)', background:'rgba(255,100,100,0.08)', color:'#f87171', cursor:'pointer', flexShrink:0, fontFamily:'Inter,sans-serif', marginLeft:4 }}
           >✕ Clear</button>
         )}
@@ -337,27 +386,87 @@ export default function AppShell() {
                 {items.map((item: any) => {
                   const isActive = activePage === item.id;
                   const mc2 = item.mineral ? MINERAL_COLORS[item.mineral] : '#00ffd5';
+                  // Watchlist gets a live count badge
+                  const isWatchlist = item.id === 'watchlist';
                   return (
-                    <div
-                      key={item.id}
-                      onClick={() => handleNav(item.id)}
-                      style={{
-                        display:'flex', alignItems:'center', gap:10, padding:'8px 20px',
-                        cursor:'pointer', borderLeft:`2px solid ${isActive ? mc2 : 'transparent'}`,
-                        background: isActive ? `${mc2}0d` : 'transparent',
-                        color: isActive ? mc2 : '#64748b',
-                        fontSize:13, fontWeight: isActive ? 500 : 400,
-                        transition:'all .12s',
-                      }}
-                      onMouseEnter={e => { if(!isActive) { (e.currentTarget as HTMLElement).style.color='#94a3b8'; (e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.02)'; }}}
-                      onMouseLeave={e => { if(!isActive) { (e.currentTarget as HTMLElement).style.color='#64748b'; (e.currentTarget as HTMLElement).style.background='transparent'; }}}
-                    >
-                      <span style={{ fontSize:item.mineral ? 10 : 13, color: item.mineral ? mc2 : 'inherit', flexShrink:0, width:14, textAlign:'center', opacity:.85 }}>
-                        {item.mineral ? '●' : item.icon}
-                      </span>
-                      <span style={{ flex:1 }}>{item.label}</span>
-                      {item.id === 'map' && (
-                        <span style={{ fontSize:9, background:'rgba(0,255,213,0.15)', color:'#00ffd5', padding:'2px 6px', borderRadius:4, fontWeight:600 }}>LIVE</span>
+                    <div key={item.id}>
+                      <div
+                        onClick={() => handleNav(item.id)}
+                        style={{
+                          display:'flex', alignItems:'center', gap:10, padding:'8px 20px',
+                          cursor:'pointer', borderLeft:`2px solid ${isActive ? mc2 : 'transparent'}`,
+                          background: isActive ? `${mc2}0d` : 'transparent',
+                          color: isActive ? mc2 : '#64748b',
+                          fontSize:13, fontWeight: isActive ? 500 : 400,
+                          transition:'all .12s',
+                        }}
+                        onMouseEnter={e => { if(!isActive) { (e.currentTarget as HTMLElement).style.color='#94a3b8'; (e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.02)'; }}}
+                        onMouseLeave={e => { if(!isActive) { (e.currentTarget as HTMLElement).style.color='#64748b'; (e.currentTarget as HTMLElement).style.background='transparent'; }}}
+                      >
+                        <span style={{ fontSize:item.mineral ? 10 : 13, color: item.mineral ? mc2 : 'inherit', flexShrink:0, width:14, textAlign:'center', opacity:.85 }}>
+                          {item.mineral ? '●' : item.icon}
+                        </span>
+                        <span style={{ flex:1 }}>{item.label}</span>
+                        {item.id === 'map' && (
+                          <span style={{ fontSize:9, background:'rgba(0,255,213,0.15)', color:'#00ffd5', padding:'2px 6px', borderRadius:4, fontWeight:600 }}>LIVE</span>
+                        )}
+                        {isWatchlist && watchlistIds.length > 0 && (
+                          <span style={{ fontSize:9, background:'rgba(251,191,36,0.15)', color:'#fbbf24', padding:'2px 7px', borderRadius:10, fontWeight:700 }}>
+                            {watchlistIds.length}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Inline watchlist panel — only visible when watchlist is active */}
+                      {isWatchlist && activePage === 'watchlist' && (
+                        <div style={{ background:'rgba(0,0,0,0.2)', borderTop:'1px solid rgba(255,255,255,0.04)', borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
+                          {watchlistDeposits.length === 0 ? (
+                            <div style={{ padding:'16px 20px', textAlign:'center' }}>
+                              <div style={{ fontSize:18, opacity:.2, marginBottom:6 }}>★</div>
+                              <div style={{ fontSize:11, color:'#334155', lineHeight:1.5 }}>No deposits watched.<br/>Click ★ on any deposit<br/>to add it here.</div>
+                            </div>
+                          ) : (
+                            watchlistDeposits.map(dep => {
+                              const depColor = MINERAL_COLORS[dep.primary_mineral] || '#94a3b8';
+                              const isSel = selectedId === dep.id;
+                              return (
+                                <div
+                                  key={dep.id}
+                                  onClick={() => {
+                                    setSelectedId(dep.id);
+                                    setActivePage('map');
+                                    if (mapFlyToRef.current) mapFlyToRef.current(dep.latitude, dep.longitude, 6);
+                                  }}
+                                  style={{
+                                    padding:'9px 20px 9px 28px', cursor:'pointer', transition:'background .12s',
+                                    borderLeft:`2px solid ${isSel ? depColor : 'transparent'}`,
+                                    background: isSel ? `${depColor}0d` : 'transparent',
+                                    display:'flex', flexDirection:'column', gap:2,
+                                  }}
+                                  onMouseEnter={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+                                  onMouseLeave={e => { if (!isSel) (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                                >
+                                  <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:6 }}>
+                                    <span style={{ fontSize:12, color: isSel ? '#e2e8f0' : '#94a3b8', fontWeight: isSel ? 600 : 400, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', flex:1 }}>
+                                      {dep.name}
+                                    </span>
+                                    <span
+                                      onClick={e => { e.stopPropagation(); toggleWatchlist(dep.id); }}
+                                      title="Remove from watchlist"
+                                      style={{ fontSize:11, color:'#fbbf24', cursor:'pointer', flexShrink:0, opacity:.7, padding:'1px 3px' }}
+                                    >★</span>
+                                  </div>
+                                  <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+                                    <span style={{ width:5, height:5, borderRadius:'50%', background:depColor, flexShrink:0 }}/>
+                                    <span style={{ fontSize:10, color:'#475569' }}>{dep.primary_mineral}</span>
+                                    <span style={{ fontSize:10, color:'#334155' }}>·</span>
+                                    <span style={{ fontSize:10, color:'#334155', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{dep.country}</span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
                       )}
                     </div>
                   );
@@ -549,13 +658,49 @@ export default function AppShell() {
 
               {/* Action icon row */}
               <div style={{ padding:'8px 16px 16px', display:'flex', gap:6, borderTop:'1px solid rgba(255,255,255,0.05)' }}>
-                {[['📄','Report'],['📊','Charts'],['🔗','Share'],['☆','Watch'],['···','More']].map(([ic,tip],i) => (
-                  <div key={i} title={tip} style={{ flex:1, height:34, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color:'#334155', transition:'all .15s' }}
+                {([['📄','Report'],['📊','Charts'],['🔗','Share'],['···','More']] as [string,string][]).map(([ic,tip]) => (
+                  <div key={tip} title={tip} style={{ flex:1, height:34, background:'rgba(255,255,255,0.03)', border:'1px solid rgba(255,255,255,0.07)', borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color:'#334155', transition:'all .15s' }}
                     onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.color='#00eaff';(e.currentTarget as HTMLElement).style.borderColor='rgba(0,234,255,0.25)';(e.currentTarget as HTMLElement).style.background='rgba(0,234,255,0.06)';}}
                     onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.color='#334155';(e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.07)';(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.03)';}}>
                     {ic}
                   </div>
                 ))}
+                {/* Watchlist star — filled yellow when watched */}
+                {(() => {
+                  const watched = watchlistIds.includes(selectedDep.id);
+                  return (
+                    <div
+                      title={watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
+                      onClick={() => toggleWatchlist(selectedDep.id)}
+                      style={{
+                        flex:1, height:34, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center',
+                        cursor:'pointer', fontSize:16, transition:'all .15s',
+                        background: watched ? 'rgba(251,191,36,0.12)' : 'rgba(255,255,255,0.03)',
+                        border: watched ? '1px solid rgba(251,191,36,0.4)' : '1px solid rgba(255,255,255,0.07)',
+                        color: watched ? '#fbbf24' : '#334155',
+                        boxShadow: watched ? '0 0 8px rgba(251,191,36,0.25)' : 'none',
+                      }}
+                      onMouseEnter={e => {
+                        (e.currentTarget as HTMLElement).style.color='#fbbf24';
+                        (e.currentTarget as HTMLElement).style.borderColor='rgba(251,191,36,0.4)';
+                        (e.currentTarget as HTMLElement).style.background='rgba(251,191,36,0.1)';
+                      }}
+                      onMouseLeave={e => {
+                        if (!watchlistIds.includes(selectedDep.id)) {
+                          (e.currentTarget as HTMLElement).style.color='#334155';
+                          (e.currentTarget as HTMLElement).style.borderColor='rgba(255,255,255,0.07)';
+                          (e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.03)';
+                        } else {
+                          (e.currentTarget as HTMLElement).style.color='#fbbf24';
+                          (e.currentTarget as HTMLElement).style.borderColor='rgba(251,191,36,0.4)';
+                          (e.currentTarget as HTMLElement).style.background='rgba(251,191,36,0.12)';
+                        }
+                      }}
+                    >
+                      {watched ? '★' : '☆'}
+                    </div>
+                  );
+                })()}
               </div>
             </>
           ) : (
@@ -568,8 +713,105 @@ export default function AppShell() {
         </div>
       </div>
 
-      {/* ══════════ BOTTOM METRICS BAR ══════════ */}
-      <div style={{ height:110, flexShrink:0, background:'#071018', borderTop:'1px solid rgba(0,234,255,0.12)', display:'flex', gap:8, padding:'8px 10px', overflowX:'auto' }}>
+      {/* ══════════ BOTTOM SECTION: TIMELINE + METRICS ══════════ */}
+      <div style={{ flexShrink:0, background:'#071018', borderTop:'1px solid rgba(0,234,255,0.12)' }}>
+
+        {/* ── Timeline control strip ── */}
+        <div style={{ height:52, display:'flex', alignItems:'center', gap:12, padding:'0 14px', borderBottom:'1px solid rgba(0,234,255,0.07)' }}>
+          {/* Play / Pause */}
+          <button
+            onClick={() => {
+              if (isPlaying) { setIsPlaying(false); }
+              else {
+                // If at max, rewind then play
+                if (timelineYear >= YEAR_MAX) setTimelineYear(YEAR_MIN);
+                setIsPlaying(true);
+              }
+            }}
+            style={{
+              width:34, height:34, borderRadius:8, flexShrink:0,
+              background: isPlaying ? 'rgba(0,234,255,0.15)' : 'rgba(0,234,255,0.06)',
+              border: `1px solid ${isPlaying ? 'rgba(0,234,255,0.5)' : 'rgba(0,234,255,0.2)'}`,
+              color:'#00eaff', cursor:'pointer', fontSize:16, display:'flex',
+              alignItems:'center', justifyContent:'center',
+              boxShadow: isPlaying ? '0 0 10px rgba(0,234,255,0.2)' : 'none',
+              transition:'all .15s', fontFamily:'Inter,sans-serif',
+            }}
+            title={isPlaying ? 'Pause' : 'Play'}
+          >
+            {isPlaying ? '⏸' : '▶'}
+          </button>
+
+          {/* Year label */}
+          <div style={{ flexShrink:0, minWidth:46, textAlign:'center' }}>
+            <div style={{ fontSize:18, fontWeight:700, color:'#00eaff', lineHeight:1, letterSpacing:-0.5, textShadow:'0 0 14px rgba(0,234,255,0.4)' }}>
+              {timelineYear === YEAR_MAX ? 'NOW' : timelineYear}
+            </div>
+            <div style={{ fontSize:9, color:'#334155', letterSpacing:.5, marginTop:2 }}>YEAR</div>
+          </div>
+
+          {/* Slider track */}
+          <div style={{ flex:1, position:'relative', height:34, display:'flex', alignItems:'center' }}>
+            {/* Year tick marks */}
+            <div style={{ position:'absolute', top:0, left:0, right:0, display:'flex', justifyContent:'space-between', pointerEvents:'none' }}>
+              {Array.from({ length: YEAR_MAX - YEAR_MIN + 1 }, (_, i) => YEAR_MIN + i).map(y => (
+                <div key={y} style={{
+                  display:'flex', flexDirection:'column', alignItems:'center', gap:1,
+                  opacity: y <= timelineYear ? 1 : 0.2,
+                }}>
+                  <div style={{
+                    width: y % 5 === 0 ? 2 : 1,
+                    height: y % 5 === 0 ? 8 : 4,
+                    background: y <= timelineYear ? '#00eaff' : '#1e3a4a',
+                    borderRadius:1,
+                  }}/>
+                  {y % 5 === 0 && (
+                    <div style={{ fontSize:8, color: y <= timelineYear ? '#00eaff' : '#1e3a4a', letterSpacing:.3, marginTop:1 }}>
+                      {y === YEAR_MAX ? 'NOW' : y}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Actual range input */}
+            <input
+              type="range"
+              min={YEAR_MIN}
+              max={YEAR_MAX}
+              value={timelineYear}
+              onChange={e => { setIsPlaying(false); setTimelineYear(Number(e.target.value)); }}
+              style={{
+                position:'absolute', left:0, right:0, bottom:0,
+                width:'100%', height:20,
+                appearance:'none', WebkitAppearance:'none',
+                background:'transparent', cursor:'pointer', outline:'none',
+              }}
+            />
+          </div>
+
+          {/* Deposit count badge */}
+          <div style={{ flexShrink:0, textAlign:'right', minWidth:64 }}>
+            <div style={{ fontSize:17, fontWeight:700, color:'#e2e8f0', lineHeight:1 }}>{filtered.length}</div>
+            <div style={{ fontSize:9, color:'#334155', letterSpacing:.5, marginTop:2 }}>VISIBLE</div>
+          </div>
+
+          {/* Reset to present */}
+          {timelineYear < YEAR_MAX && (
+            <button
+              onClick={() => { setIsPlaying(false); setTimelineYear(YEAR_MAX); }}
+              style={{
+                flexShrink:0, padding:'5px 10px', borderRadius:8, fontSize:10,
+                border:'1px solid rgba(0,234,255,0.2)', background:'rgba(0,234,255,0.05)',
+                color:'#00eaff', cursor:'pointer', fontFamily:'Inter,sans-serif', transition:'all .15s',
+              }}
+              title="Jump to present"
+            >Now</button>
+          )}
+        </div>
+
+        {/* ── KPI tiles row ── */}
+        <div style={{ height:110, display:'flex', gap:8, padding:'8px 10px', overflowX:'auto' }}>
         {([
           {
             key:'deposits', label:'DEPOSITS TRACKED',
@@ -577,7 +819,7 @@ export default function AppShell() {
               <div style={{ display:'flex', alignItems:'flex-end', gap:10, flex:1, minWidth:0 }}>
                 <div>
                   <div style={{ fontSize:32, fontWeight:700, color:'#00eaff', lineHeight:1, letterSpacing:-1.5, textShadow:'0 0 20px rgba(0,234,255,0.4)' }}>{kpis.total_deposits}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral || searchQ) ? `of ${allKpis.total_deposits} total` : 'in database'}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral) ? `of ${allKpis.total_deposits} total` : 'in database'}</div>
                 </div>
                 <div style={{ marginBottom:6, flex:1 }}><Sparkline color="#00eaff" up={true}/></div>
               </div>
@@ -588,8 +830,8 @@ export default function AppShell() {
             content: (
               <div style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
                 <div>
-                  <div style={{ fontSize:32, fontWeight:700, color:'#22d3ee', lineHeight:1, letterSpacing:-1, textShadow:'0 0 16px rgba(34,211,238,0.35)' }}>{kpis.african_deposits}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral || searchQ) ? `of ${allKpis.african_deposits} African` : 'in current view'}</div>
+                  <div style={{ fontSize:32, fontWeight:700, color:'#22d3ee', lineHeight:1, letterSpacing:-1, textShadow:'0 0 16px rgba(34,211,238,0.35)' }}>{allKpis.african_deposits}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>in database</div>
                 </div>
                 <button
                   onClick={() => { const next = !africaFilter; setAfricaFilter(next); if (next && mapFlyToRef.current) mapFlyToRef.current(5, 22, 4); else if (!next && mapFlyToRef.current) mapFlyToRef.current(20, 10, 3); }}
@@ -680,6 +922,7 @@ export default function AppShell() {
             {content}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );

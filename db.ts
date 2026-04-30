@@ -4,7 +4,7 @@
 // =============================================================
 
 import { Pool, PoolClient, QueryResult } from 'pg';
-import type { MapFilters, DepositSummary, DepositDetail, DepositGeoJSON } from '../types';
+import type { MapFilters, DepositSummary, DepositDetail, DepositGeoJSON } from './types';
 
 // ── Connection pool ───────────────────────────────────────────
 const pool = new Pool({

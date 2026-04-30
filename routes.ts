@@ -35,7 +35,7 @@ import {
   getDepositsNear,
   getDashboardKPIs,
   query,
-} from '@/lib/db';
+} from '@/db';
 import type { MapFilters } from '@/types';
 
 // Shared CORS + cache headers
