@@ -41,6 +41,7 @@ export interface KPIs {
   high_opportunity: number;
   high_confidence: number;
   avg_opportunity: number;
+  african_deposits: number;
 }
 
 export interface Mineral {

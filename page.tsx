@@ -1,8 +1,8 @@
 'use client';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import type { Deposit } from '@/types';
-import { DEPOSITS, computeKPIs } from '@/lib/localData';
+import { DEPOSITS, computeKPIs, isAfrica, getPaleoContext } from '@/lib/localData';
 
 const StratMap = dynamic(() => import('@/components/StratMap'), {
   ssr: false,
@@ -21,23 +21,26 @@ const MINERAL_COLORS: Record<string,string> = {
   'Graphite':'#94a3b8', 'Manganese':'#22d3ee', 'Tantalum':'#ffffff',
 };
 
-// ── Sidebar nav items (matching reference image) ───────────────
+// ── Sidebar nav items ─────────────────────────────────────────
 const NAV = [
-  { section:'PLATFORM',     items:[
-    { id:'dashboard', label:'Dashboard',         icon:'⊞' },
-    { id:'map',       label:'Global Map',         icon:'◎', active:true },
-    { id:'watchlist', label:'Watchlist',          icon:'★' },
+  { section:'PLATFORM', items:[
+    { id:'dashboard', label:'Dashboard',       icon:'⊞' },
+    { id:'map',       label:'Global Map',       icon:'◎' },
+    { id:'watchlist', label:'Watchlist',        icon:'★' },
   ]},
-  { section:'MINERALS',     items: MINERALS.map(m => ({ id:m.toLowerCase().replace(' ','-'), label:m, icon:'●', mineral:m })) },
-  { section:'ANALYTICS',    items:[
-    { id:'rankings',  label:'Rankings',           icon:'↑↓' },
-    { id:'prices',    label:'Price Signals',       icon:'〜' },
-    { id:'risk',      label:'Supply Risk',         icon:'⚠' },
-    { id:'pipeline',  label:'Discovery Pipeline',  icon:'⬡' },
+  { section:'REGIONS', items:[
+    { id:'africa',    label:'Africa Focus',     icon:'🌍', accent:'#22d3ee' },
+  ]},
+  { section:'MINERALS', items: ['Lithium','Copper','Cobalt','Nickel','Rare Earths','Uranium','Graphite','Manganese'].map(m => ({ id:m.toLowerCase().replace(' ','-'), label:m, icon:'●', mineral:m })) },
+  { section:'ANALYTICS', items:[
+    { id:'rankings',  label:'Rankings',         icon:'↑↓' },
+    { id:'prices',    label:'Price Signals',     icon:'〜' },
+    { id:'risk',      label:'Supply Risk',       icon:'⚠' },
+    { id:'pipeline',  label:'Discovery Pipeline',icon:'⬡' },
   ]},
   { section:'INTELLIGENCE', items:[
-    { id:'ai',      label:'AI Research',           icon:'◈' },
-    { id:'sources', label:'Sources',               icon:'☰' },
+    { id:'ai',      label:'AI Research',         icon:'◈' },
+    { id:'sources', label:'Sources',             icon:'☰' },
   ]},
 ];
 
@@ -125,6 +128,8 @@ export default function Page() {
   const [selectedDep, setSelectedDep] = useState<Deposit | null>(() => DEPOSITS.find(d=>d.id==='ken') || null);
   const [searchQ, setSearchQ]         = useState('');
   const [activeMineral, setActiveMineral] = useState<string|null>(null);
+  const [africaFilter, setAfricaFilter]   = useState(false);
+  const mapFlyToRef = useRef<((lat: number, lon: number, zoom?: number) => void) | null>(null);
 
   useEffect(() => { setMounted(true); }, []);
 
@@ -137,33 +142,40 @@ export default function Page() {
     let d = [...DEPOSITS];
     if (searchQ) {
       const q = searchQ.toLowerCase();
-      d = d.filter(x => x.name.toLowerCase().includes(q) || x.country.toLowerCase().includes(q) || x.primary_mineral.toLowerCase().includes(q) || (x.operator||'').toLowerCase().includes(q));
+      d = d.filter(x =>
+        x.name.toLowerCase().includes(q) ||
+        x.country.toLowerCase().includes(q) ||
+        x.primary_mineral.toLowerCase().includes(q) ||
+        (x.operator||'').toLowerCase().includes(q) ||
+        (x.region||'').toLowerCase().includes(q)
+      );
     }
     if (activeMineral) d = d.filter(x => x.primary_mineral === activeMineral);
+    if (africaFilter)  d = d.filter(x => isAfrica(x));
     return d;
-  }, [searchQ, activeMineral]);
+  }, [searchQ, activeMineral, africaFilter]);
 
-  const kpis = useMemo(() => computeKPIs(DEPOSITS), []);
+  const kpis = useMemo(() => computeKPIs(filtered), [filtered]);
+  const allKpis = useMemo(() => computeKPIs(DEPOSITS), []);
 
   const handleNav = useCallback((id: string) => {
     setActivePage(id);
     const mineralMap: Record<string,string> = { lithium:'Lithium', copper:'Copper', cobalt:'Cobalt', nickel:'Nickel', 'rare-earths':'Rare Earths', uranium:'Uranium', graphite:'Graphite', manganese:'Manganese' };
-    if (mineralMap[id]) { setActiveMineral(mineralMap[id]); }
-    else if (id === 'map' || id === 'dashboard') { setActiveMineral(null); }
+    if (mineralMap[id]) { setActiveMineral(mineralMap[id]); setAfricaFilter(false); }
+    else if (id === 'map' || id === 'dashboard') { setActiveMineral(null); setAfricaFilter(false); }
+    else if (id === 'africa') {
+      setActiveMineral(null);
+      setAfricaFilter(true);
+      // Fly to Africa centre
+      if (mapFlyToRef.current) mapFlyToRef.current(5, 22, 4);
+    }
   }, []);
 
   if (!mounted) {
     return <div style={{ width:'100vw', height:'100vh', background:'#05070b' }}/>;
   }
 
-  const mc = selectedDep ? (MINERAL_COLORS[selectedDep.primary_mineral] || '#00ffd5') : '#00ffd5';
-  const statusByCounts = useMemo(() => ({
-    Producing:   DEPOSITS.filter(d=>d.status==='producing').length,
-    Maintaining: DEPOSITS.filter(d=>d.status==='past_producing'||d.status==='care_and_maintenance').length,
-    Exploration: DEPOSITS.filter(d=>d.status==='exploration'||d.status==='feasibility').length,
-    Undeveloped: DEPOSITS.filter(d=>d.status==='undeveloped'||d.status==='construction').length,
-  }), []);
-  const statusTotal = Object.values(statusByCounts).reduce((a,b)=>a+b,0);
+  const mc = selectedDep ? (MINERAL_COLORS[selectedDep.primary_mineral] || '#00eaff') : '#00eaff';
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', width:'100vw', background:'#05070b', overflow:'hidden', fontFamily:'Inter,sans-serif' }}>
@@ -216,27 +228,49 @@ export default function Page() {
 
       {/* ══════════ FILTER PILLS ROW ══════════ */}
       <div style={{ height:44, flexShrink:0, background:'#0b0f17', borderBottom:'1px solid rgba(255,255,255,0.05)', display:'flex', alignItems:'center', paddingLeft:272, paddingRight:16, gap:6, overflowX:'auto' }}>
+        {/* Africa quick filter */}
+        <button
+          onClick={() => { setAfricaFilter(v => !v); if (!africaFilter && mapFlyToRef.current) mapFlyToRef.current(5, 22, 4); if (africaFilter && mapFlyToRef.current) mapFlyToRef.current(20, 10, 3); }}
+          style={{
+            padding:'5px 14px', borderRadius:20, fontSize:12, fontWeight:600,
+            border: africaFilter ? '1px solid #22d3ee' : '1px solid rgba(34,211,238,0.25)',
+            background: africaFilter ? 'rgba(34,211,238,0.18)' : 'rgba(34,211,238,0.06)',
+            color: africaFilter ? '#22d3ee' : '#64748b',
+            cursor:'pointer', whiteSpace:'nowrap', flexShrink:0, transition:'all .15s',
+            boxShadow: africaFilter ? '0 0 10px rgba(34,211,238,0.25)' : 'none',
+            fontFamily:'Inter,sans-serif',
+          }}
+        >🌍 Africa</button>
+        <div style={{ width:1, height:20, background:'rgba(255,255,255,0.08)', flexShrink:0 }}/>
+        {/* Mineral filters */}
         {['All', ...MINERALS].map(m => {
           const isAll = m === 'All';
-          const isActive = isAll ? activeMineral===null : activeMineral===m;
-          const color = isAll ? '#00ffd5' : (MINERAL_COLORS[m] || '#00ffd5');
+          const isActive = isAll ? (activeMineral===null && !africaFilter) : activeMineral===m;
+          const color = isAll ? '#00eaff' : (MINERAL_COLORS[m] || '#00eaff');
           return (
             <button
               key={m}
-              onClick={() => { setActiveMineral(isAll ? null : (activeMineral===m ? null : m)); }}
+              onClick={() => { setActiveMineral(isAll ? null : (activeMineral===m ? null : m)); if (isAll) setAfricaFilter(false); }}
               style={{
                 padding:'5px 14px', borderRadius:20, fontSize:12, fontWeight:500,
-                border: isActive ? `1px solid ${color}` : '1px solid rgba(0,255,200,0.15)',
-                background: isActive ? `${color}20` : '#0f1623',
-                color: isActive ? color : '#94a3b8',
+                border: isActive ? `1px solid ${color}` : '1px solid rgba(0,234,255,0.12)',
+                background: isActive ? `${color}1e` : '#0e1621',
+                color: isActive ? color : '#475569',
                 cursor:'pointer', whiteSpace:'nowrap', flexShrink:0, transition:'all .15s',
-                boxShadow: isActive ? `0 0 8px ${color}30` : 'none',
+                boxShadow: isActive ? `0 0 8px ${color}28` : 'none',
                 fontFamily:'Inter,sans-serif',
               }}
             >{m}</button>
           );
         })}
-        <button style={{ padding:'5px 12px', borderRadius:20, fontSize:12, border:'1px solid rgba(0,255,200,0.15)', background:'#0f1623', color:'#94a3b8', cursor:'pointer', flexShrink:0, fontFamily:'Inter,sans-serif' }}>+ More</button>
+        <button style={{ padding:'5px 12px', borderRadius:20, fontSize:12, border:'1px solid rgba(0,234,255,0.12)', background:'#0e1621', color:'#475569', cursor:'pointer', flexShrink:0, fontFamily:'Inter,sans-serif' }}>+ More</button>
+        {/* Active filter indicator */}
+        {(africaFilter || activeMineral || searchQ) && (
+          <button
+            onClick={() => { setAfricaFilter(false); setActiveMineral(null); setSearchQ(''); }}
+            style={{ padding:'5px 10px', borderRadius:20, fontSize:11, border:'1px solid rgba(255,100,100,0.3)', background:'rgba(255,100,100,0.08)', color:'#f87171', cursor:'pointer', flexShrink:0, fontFamily:'Inter,sans-serif', marginLeft:4 }}
+          >✕ Clear</button>
+        )}
       </div>
 
       {/* ══════════ MAIN BODY ══════════ */}
@@ -295,7 +329,12 @@ export default function Page() {
 
         {/* ── MAP ── */}
         <div style={{ flex:1, position:'relative', minWidth:0 }}>
-          <StratMap deposits={filtered} selectedId={selectedId} onSelect={setSelectedId} />
+          <StratMap
+            deposits={filtered}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            onMapReady={(flyTo) => { mapFlyToRef.current = flyTo; }}
+          />
 
           {/* Mineral type legend on map */}
           <div style={{ position:'absolute', bottom:16, left:16, background:'rgba(11,15,23,0.9)', border:'1px solid rgba(0,255,213,0.15)', padding:'12px 14px', borderRadius:10, zIndex:500, backdropFilter:'blur(4px)' }}>
@@ -428,6 +467,23 @@ export default function Page() {
                 </p>
               </div>
 
+              {/* Paleo / Geologic Context */}
+              {(() => {
+                const paleo = getPaleoContext(selectedDep);
+                return (
+                  <div style={{ margin:'0 16px 10px', padding:'12px 14px', background:'rgba(168,85,247,0.04)', border:'1px solid rgba(168,85,247,0.2)', borderRadius:10 }}>
+                    <div style={{ fontSize:10, color:'#a855f7', letterSpacing:'1.4px', fontWeight:600, marginBottom:6, opacity:.85 }}>PALEO / GEOLOGIC CONTEXT</div>
+                    <div style={{ fontSize:12, color:'#c4b5fd', fontWeight:500, marginBottom:6 }}>{paleo.label}</div>
+                    <p style={{ fontSize:11, color:'#64748b', lineHeight:1.6, margin:0 }}>{paleo.note}</p>
+                    {selectedDep.paleo_setting && (
+                      <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid rgba(168,85,247,0.15)', fontSize:11, color:'#7c3aed', opacity:.7, fontStyle:'italic' }}>
+                        {selectedDep.paleo_setting}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* View Intelligence */}
               <div style={{ padding:'0 16px 12px' }}>
                 <button style={{ width:'100%', padding:'11px', background:'rgba(0,234,255,0.08)', border:'1px solid rgba(0,234,255,0.28)', color:'#00eaff', fontSize:12, fontWeight:500, borderRadius:10, cursor:'pointer', fontFamily:'Inter,sans-serif', letterSpacing:.4 }}
@@ -460,16 +516,32 @@ export default function Page() {
 
       {/* ══════════ BOTTOM METRICS BAR ══════════ */}
       <div style={{ height:110, flexShrink:0, background:'#071018', borderTop:'1px solid rgba(0,234,255,0.12)', display:'flex', gap:8, padding:'8px 10px', overflowX:'auto' }}>
-        {[
+        {([
           {
             key:'deposits', label:'DEPOSITS TRACKED',
             content: (
               <div style={{ display:'flex', alignItems:'flex-end', gap:10, flex:1, minWidth:0 }}>
                 <div>
-                  <div style={{ fontSize:32, fontWeight:700, color:'#00eaff', lineHeight:1, letterSpacing:-1.5, textShadow:'0 0 20px rgba(0,234,255,0.4)' }}>{kpis.total_deposits.toLocaleString()}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>+ 23 this week</div>
+                  <div style={{ fontSize:32, fontWeight:700, color:'#00eaff', lineHeight:1, letterSpacing:-1.5, textShadow:'0 0 20px rgba(0,234,255,0.4)' }}>{kpis.total_deposits}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral) ? `of ${allKpis.total_deposits} total` : 'in database'}</div>
                 </div>
                 <div style={{ marginBottom:6, flex:1 }}><Sparkline color="#00eaff" up={true}/></div>
+              </div>
+            ),
+          },
+          {
+            key:'africa', label:'AFRICAN DEPOSITS',
+            content: (
+              <div style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
+                <div>
+                  <div style={{ fontSize:32, fontWeight:700, color:'#22d3ee', lineHeight:1, letterSpacing:-1, textShadow:'0 0 16px rgba(34,211,238,0.35)' }}>{allKpis.african_deposits}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>in database</div>
+                </div>
+                <button
+                  onClick={() => { const next = !africaFilter; setAfricaFilter(next); if (next && mapFlyToRef.current) mapFlyToRef.current(5, 22, 4); else if (!next && mapFlyToRef.current) mapFlyToRef.current(20, 10, 3); }}
+                  style={{ padding:'5px 10px', borderRadius:8, fontSize:10, border: africaFilter ? '1px solid #22d3ee' : '1px solid rgba(34,211,238,0.25)', background: africaFilter ? 'rgba(34,211,238,0.15)' : 'rgba(34,211,238,0.05)', color: africaFilter ? '#22d3ee' : '#475569', cursor:'pointer', fontFamily:'Inter,sans-serif', transition:'all .15s', whiteSpace:'nowrap' }}>
+                  {africaFilter ? '✓ Active' : 'Focus'}
+                </button>
               </div>
             ),
           },
@@ -479,7 +551,7 @@ export default function Page() {
               <div style={{ display:'flex', alignItems:'center', gap:10, flex:1 }}>
                 <div>
                   <div style={{ fontSize:32, fontWeight:700, color:'#e2e8f0', lineHeight:1, letterSpacing:-1 }}>{kpis.countries_covered}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>of 195</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>countries</div>
                 </div>
                 <GlobeIcon/>
               </div>
@@ -493,23 +565,21 @@ export default function Page() {
                   <div style={{ fontSize:32, fontWeight:700, color:'#e2e8f0', lineHeight:1, letterSpacing:-1 }}>{kpis.minerals_covered}</div>
                   <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>tracked</div>
                 </div>
-                <Donut value={kpis.minerals_covered} max={14}/>
+                <Donut value={kpis.minerals_covered} max={9}/>
               </div>
             ),
           },
           {
-            key:'status', label:'DEPOSITS BY STATUS',
+            key:'status', label:'BY STATUS',
             content: (
-              <div style={{ flex:1, display:'flex', gap:14 }}>
+              <div style={{ flex:1, display:'flex', gap:10 }}>
                 <div style={{ flex:1 }}>
-                  {Object.entries(statusByCounts).slice(0,2).map(([label, count]) => (
-                    <StatusBar key={label} label={label} count={count} total={statusTotal} color={label==='Producing'?'#25f5a6':label==='Maintaining'?'#ff7a22':'#94a3b8'}/>
-                  ))}
+                  <StatusBar label="Producing"   count={kpis.producing}         total={kpis.total_deposits || 1} color="#25f5a6"/>
+                  <StatusBar label="Undeveloped" count={kpis.undeveloped}       total={kpis.total_deposits || 1} color="#a855f7"/>
                 </div>
                 <div style={{ flex:1 }}>
-                  {Object.entries(statusByCounts).slice(2).map(([label, count]) => (
-                    <StatusBar key={label} label={label} count={count} total={statusTotal} color={label==='Exploration'?'#3f8cff':'#a855f7'}/>
-                  ))}
+                  <StatusBar label="High Opp."   count={kpis.high_opportunity}  total={kpis.total_deposits || 1} color="#ff7a22"/>
+                  <StatusBar label="High Conf."  count={kpis.high_confidence}   total={kpis.total_deposits || 1} color="#3f8cff"/>
                 </div>
               </div>
             ),
@@ -538,11 +608,11 @@ export default function Page() {
               </div>
             ),
           },
-        ].map(({ key, label, content }, i) => (
+        ] as {key:string; label:string; content:React.ReactNode}[]).map(({ key, label, content }) => (
           <div
             key={key}
             style={{
-              flex:1, minWidth:140, padding:'10px 14px',
+              flex:1, minWidth:120, padding:'10px 12px',
               background:'rgba(0,234,255,0.03)',
               border:'1px solid rgba(0,234,255,0.1)',
               borderRadius:10,

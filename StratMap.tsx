@@ -9,6 +9,7 @@ interface Props {
   deposits: Deposit[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  onMapReady?: (flyTo: (lat: number, lon: number, zoom?: number) => void) => void;
 }
 
 // Intelligence-grade mineral colors — exact spec
@@ -80,7 +81,7 @@ function ensureMapCSS() {
   document.head.appendChild(s);
 }
 
-export default function StratMap({ deposits, selectedId, onSelect }: Props) {
+export default function StratMap({ deposits, selectedId, onSelect, onMapReady }: Props) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const mapRef         = useRef<any>(null);
   const markerLayerRef = useRef<any>(null);
@@ -187,6 +188,13 @@ export default function StratMap({ deposits, selectedId, onSelect }: Props) {
       // Marker layer
       const markerLayer = L.layerGroup().addTo(map);
       markerLayerRef.current = markerLayer;
+
+      // Expose flyTo for external navigation (Africa filter etc.)
+      if (onMapReady) {
+        onMapReady((lat: number, lon: number, zoom = 4) => {
+          map.flyTo([lat, lon], zoom, { duration: 1.2 });
+        });
+      }
     };
 
     initMap().catch(console.error);
