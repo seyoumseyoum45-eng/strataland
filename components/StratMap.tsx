@@ -1,9 +1,9 @@
-"use client";
+'use client';
 // StratMap — real Leaflet map, client-only
 // Preserves: stable init, double-init guard, SSR safety
 // Upgrades:  radar pulse markers, cyan country borders, intelligence grid
 import { useEffect, useRef, useState } from 'react';
-import type { Deposit } from '@/types';
+import type { Deposit } from '../types';
 
 interface Props {
   deposits?: Deposit[];
@@ -190,7 +190,24 @@ export default function StratMap({ deposits = [], selectedId, onSelect, onMapRea
 
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
+      // ── Marker layer — created immediately so deposits can render
+      //    regardless of whether the network fetches below succeed.
+      const markerLayer = L.layerGroup().addTo(map);
+      markerLayerRef.current = markerLayer;
+
+      // Signal ready NOW — markers will draw as soon as this state flips.
+      // Everything below (borders, graticule, labels) is purely cosmetic.
+      setMapReady(true);
+
+      // ── Expose flyTo ──────────────────────────────────────────
+      if (onMapReady) {
+        onMapReady((lat: number, lon: number, zoom = 4) => {
+          map.flyTo([lat, lon], zoom, { duration: 1.2 });
+        });
+      }
+
       // Natural Earth — glowing cyan country borders + dark land fill
+      // Runs after markers are ready; failure does not affect deposit rendering.
       try {
         const [topoRes, { feature }] = await Promise.all([
           fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'),
@@ -208,7 +225,7 @@ export default function StratMap({ deposits = [], selectedId, onSelect, onMapRea
             fillOpacity: 0.82,
           },
         }).addTo(map);
-      } catch { /* tiles still work */ }
+      } catch { /* border fetch failed — tiles and markers still work */ }
 
       // Intelligence graticule — very subtle, not neon
       const grid = L.layerGroup().addTo(map);
@@ -252,19 +269,7 @@ export default function StratMap({ deposits = [], selectedId, onSelect, onMapRea
       });
 
       // Marker layer
-      const markerLayer = L.layerGroup().addTo(map);
-      markerLayerRef.current = markerLayer;
-
-      // Expose flyTo for external navigation (Africa filter etc.)
-      if (onMapReady) {
-        onMapReady((lat: number, lon: number, zoom = 4) => {
-          map.flyTo([lat, lon], zoom, { duration: 1.2 });
-        });
-      }
-
-      // Signal that the map and marker layer are ready.
-      // This triggers the marker useEffect to run with current deposits.
-      setMapReady(true);
+      // (now created earlier, before network fetches — see above)
     };
 
     initMap().catch(console.error);

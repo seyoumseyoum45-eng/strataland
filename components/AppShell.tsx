@@ -1,10 +1,10 @@
 'use client';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import type { Deposit } from '@/types';
-import { DEPOSITS, computeKPIs, isAfrica, getPaleoContext } from '@/lib/localData';
+import type { Deposit } from '../types';
+import { DEPOSITS, computeKPIs, isAfrica, getPaleoContext } from '../lib/localData';
 
-const StratMap = dynamic(() => import('@/components/StratMap'), {
+const StratMap = dynamic(() => import('../components/StratMap'), {
   ssr: false,
   loading: () => (
     <div style={{ width:'100%', height:'100%', background:'#05070b', display:'flex', alignItems:'center', justifyContent:'center', color:'rgba(0,255,213,0.4)', fontSize:11, letterSpacing:2 }}>
@@ -370,7 +370,9 @@ export default function AppShell() {
           {/* Header */}
           <div style={{ padding:'14px 16px 12px', borderBottom:'1px solid rgba(0,255,213,0.1)', display:'flex', alignItems:'center', justifyContent:'space-between' }}>
             <div style={{ fontSize:10, color:'#00eaff', letterSpacing:'1.4px', fontWeight:600 }}>SELECTED DEPOSIT</div>
-            <div style={{ color:'#334155', cursor:'pointer', fontSize:16, lineHeight:1 }}>›</div>
+            <div style={{ fontSize:10, color:'#334155', letterSpacing:.5 }}>
+              {filtered.length} deposit{filtered.length !== 1 ? 's' : ''} loaded
+            </div>
           </div>
 
           {selectedDep ? (
