@@ -21,6 +21,53 @@ const MINERAL_COLORS: Record<string,string> = {
   'Graphite':'#94a3b8', 'Manganese':'#22d3ee', 'Tantalum':'#ffffff',
 };
 
+const CONFIDENCE_RANK: Record<string, number> = { high: 3, medium: 2, low: 1, unknown: 0 };
+const DRC_ALIASES = new Set(['drc', 'dr congo', 'democratic republic of congo', 'congo drc', 'rdc']);
+
+function normalizeText(value: unknown): string {
+  return String(value ?? '').toLowerCase().trim();
+}
+
+function depositMatchesSearch(dep: Deposit, rawQuery: string): boolean {
+  const q = normalizeText(rawQuery);
+  if (!q) return true;
+
+  const country = normalizeText(dep.country);
+  const searchable = [
+    dep.name,
+    dep.country,
+    dep.region,
+    dep.primary_mineral,
+    dep.secondary_minerals.join(' '),
+    dep.operator,
+    dep.owner,
+  ].map(normalizeText);
+
+  return (
+    searchable.some(value => value.includes(q)) ||
+    (DRC_ALIASES.has(q) && (country === 'dr congo' || country.includes('democratic republic')))
+  );
+}
+
+function depositMatchesMineral(dep: Deposit, mineral: string): boolean {
+  return dep.primary_mineral === mineral || dep.secondary_minerals.includes(mineral);
+}
+
+function rankDeposits(deposits: Deposit[]): Deposit[] {
+  return [...deposits].sort((a, b) => {
+    const opportunity = b.opportunity_score - a.opportunity_score;
+    if (opportunity !== 0) return opportunity;
+
+    const difficulty = a.difficulty_score - b.difficulty_score;
+    if (difficulty !== 0) return difficulty;
+
+    const confidence = (CONFIDENCE_RANK[b.data_confidence] ?? 0) - (CONFIDENCE_RANK[a.data_confidence] ?? 0);
+    if (confidence !== 0) return confidence;
+
+    return a.name.localeCompare(b.name);
+  });
+}
+
 // ── Sidebar nav items ─────────────────────────────────────────
 const NAV = [
   { section:'PLATFORM', items:[
@@ -141,20 +188,22 @@ export default function AppShell() {
 
   const filtered = useMemo(() => {
     let d = [...DEPOSITS];
-    if (searchQ) {
-      const q = searchQ.toLowerCase();
-      d = d.filter(x =>
-        x.name.toLowerCase().includes(q) ||
-        x.country.toLowerCase().includes(q) ||
-        x.primary_mineral.toLowerCase().includes(q) ||
-        (x.operator||'').toLowerCase().includes(q) ||
-        (x.region||'').toLowerCase().includes(q)
-      );
-    }
-    if (activeMineral) d = d.filter(x => x.primary_mineral === activeMineral);
+    if (searchQ) d = d.filter(x => depositMatchesSearch(x, searchQ));
+    if (activeMineral) d = d.filter(x => depositMatchesMineral(x, activeMineral));
     if (africaFilter)  d = d.filter(x => isAfrica(x));
-    return d;
+    return rankDeposits(d);
   }, [searchQ, activeMineral, africaFilter]);
+
+  useEffect(() => {
+    if (!filtered.length) {
+      if (selectedId !== null) setSelectedId(null);
+      return;
+    }
+
+    if (!selectedId || !filtered.some(dep => dep.id === selectedId)) {
+      setSelectedId(filtered[0].id);
+    }
+  }, [filtered, selectedId]);
 
   const kpis = useMemo(() => computeKPIs(filtered), [filtered]);
   const allKpis = useMemo(() => computeKPIs(DEPOSITS), []);
@@ -528,7 +577,7 @@ export default function AppShell() {
               <div style={{ display:'flex', alignItems:'flex-end', gap:10, flex:1, minWidth:0 }}>
                 <div>
                   <div style={{ fontSize:32, fontWeight:700, color:'#00eaff', lineHeight:1, letterSpacing:-1.5, textShadow:'0 0 20px rgba(0,234,255,0.4)' }}>{kpis.total_deposits}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral) ? `of ${allKpis.total_deposits} total` : 'in database'}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral || searchQ) ? `of ${allKpis.total_deposits} total` : 'in database'}</div>
                 </div>
                 <div style={{ marginBottom:6, flex:1 }}><Sparkline color="#00eaff" up={true}/></div>
               </div>
@@ -539,8 +588,8 @@ export default function AppShell() {
             content: (
               <div style={{ display:'flex', alignItems:'center', gap:8, flex:1 }}>
                 <div>
-                  <div style={{ fontSize:32, fontWeight:700, color:'#22d3ee', lineHeight:1, letterSpacing:-1, textShadow:'0 0 16px rgba(34,211,238,0.35)' }}>{allKpis.african_deposits}</div>
-                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>in database</div>
+                  <div style={{ fontSize:32, fontWeight:700, color:'#22d3ee', lineHeight:1, letterSpacing:-1, textShadow:'0 0 16px rgba(34,211,238,0.35)' }}>{kpis.african_deposits}</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{(africaFilter || activeMineral || searchQ) ? `of ${allKpis.african_deposits} African` : 'in current view'}</div>
                 </div>
                 <button
                   onClick={() => { const next = !africaFilter; setAfricaFilter(next); if (next && mapFlyToRef.current) mapFlyToRef.current(5, 22, 4); else if (!next && mapFlyToRef.current) mapFlyToRef.current(20, 10, 3); }}
