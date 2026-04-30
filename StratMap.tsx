@@ -1,4 +1,4 @@
-'use client';
+"use client";
 // StratMap — real Leaflet map, client-only
 // Preserves: stable init, double-init guard, SSR safety
 // Upgrades:  radar pulse markers, cyan country borders, intelligence grid
@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Deposit } from '@/types';
 
 interface Props {
-  deposits: Deposit[];
+  deposits?: Deposit[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   onMapReady?: (flyTo: (lat: number, lon: number, zoom?: number) => void) => void;
@@ -57,36 +57,89 @@ function ensureMapCSS() {
   const s = document.createElement('style');
   s.id = 'strataland-map-css';
   s.textContent = `
-    .leaflet-container { background: #02070d !important; }
-    /* Tint Carto tiles toward deep ocean blue — remove gray, push toward navy */
-    .leaflet-tile-pane { filter: hue-rotate(170deg) saturate(1.4) brightness(0.82) contrast(1.1); }
-    .leaflet-popup-content-wrapper { background:transparent!important;border:none!important;padding:0!important;box-shadow:none!important;border-radius:0!important; }
-    .leaflet-popup-content { margin:0!important; }
-    .leaflet-popup-tip-container { display:none!important; }
-    .leaflet-control-attribution { background:rgba(2,7,13,0.9)!important;color:#334155!important;font-size:9px!important;padding:2px 6px!important; }
-    .leaflet-control-attribution a { color:#334155!important; }
-    .leaflet-control-zoom { border:1px solid rgba(0,234,255,0.25)!important;border-radius:8px!important;overflow:hidden;margin-bottom:16px!important;margin-right:14px!important;box-shadow:0 0 12px rgba(0,234,255,0.08)!important; }
-    .leaflet-control-zoom a { background:#071018!important;color:#00eaff!important;border-color:rgba(0,234,255,0.12)!important;width:34px!important;height:34px!important;line-height:34px!important;font-size:18px!important;font-weight:300!important; }
-    .leaflet-control-zoom a:hover { background:#0e1e2e!important;color:#fff!important; }
-    .radar-marker-wrap { overflow:visible!important;cursor:pointer;background:transparent!important; }
-    @keyframes radarPulse  { 0%{transform:scale(1);opacity:0.75} 80%{transform:scale(3.8);opacity:0} 100%{transform:scale(3.8);opacity:0} }
-    @keyframes radarPulse2 { 0%{transform:scale(1);opacity:0.45} 80%{transform:scale(2.4);opacity:0} 100%{transform:scale(2.4);opacity:0} }
-    @keyframes coreBlink   { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.7;transform:scale(0.92)} }
-    @keyframes selGlow     { 0%,100%{box-shadow:var(--sel-glow-a)} 50%{box-shadow:var(--sel-glow-b)} }
-    .rp-ring1 { animation: radarPulse  2.2s cubic-bezier(0,0.6,0.4,1) infinite; transform-origin:center; }
-    .rp-ring2 { animation: radarPulse2 2.2s cubic-bezier(0,0.6,0.4,1) 0.9s infinite; transform-origin:center; }
-    .rp-core  { animation: coreBlink   2.4s ease-in-out infinite; }
-    .rp-sel   { animation: selGlow     1.8s ease-in-out infinite; }
+    .leaflet-container { background: #010a12 !important; }
+
+    /* ── Ocean colour fix ──────────────────────────────────────
+       Carto Dark Matter tiles are gray-dominant.
+       hue-rotate(195deg) pushes ocean toward navy/teal.
+       saturate(0.9) keeps it from going too blue-green.
+       brightness(0.72) darkens everything — ocean becomes near-black.
+       contrast(1.15) restores land/coast sharpness.
+    ─────────────────────────────────────────────────────────── */
+    .leaflet-tile-pane {
+      filter: hue-rotate(195deg) saturate(0.9) brightness(0.72) contrast(1.15);
+    }
+
+    /* Dark translucent overlay — pane sits above tiles, below markers */
+    .leaflet-overlay-pane { pointer-events: none; }
+
+    /* Popup reset */
+    .leaflet-popup-content-wrapper {
+      background: transparent !important; border: none !important;
+      padding: 0 !important; box-shadow: none !important; border-radius: 0 !important;
+    }
+    .leaflet-popup-content { margin: 0 !important; }
+    .leaflet-popup-tip-container { display: none !important; }
+
+    /* Attribution */
+    .leaflet-control-attribution {
+      background: rgba(1,10,18,0.9) !important; color: #1e3a4a !important; font-size: 9px !important;
+    }
+    .leaflet-control-attribution a { color: #1e3a4a !important; }
+
+    /* Zoom */
+    .leaflet-control-zoom {
+      border: 1px solid rgba(0,234,255,0.2) !important; border-radius: 8px !important;
+      overflow: hidden; margin-bottom: 16px !important; margin-right: 14px !important;
+    }
+    .leaflet-control-zoom a {
+      background: #060e18 !important; color: #00eaff !important;
+      border-color: rgba(0,234,255,0.08) !important;
+      width: 34px !important; height: 34px !important; line-height: 34px !important;
+      font-size: 18px !important; font-weight: 300 !important;
+    }
+    .leaflet-control-zoom a:hover { background: #0c1a28 !important; color: #fff !important; }
+
+    /* Marker */
+    .radar-marker-wrap { overflow: visible !important; cursor: pointer; background: transparent !important; }
+
+    /* Animations */
+    @keyframes radarPulse  {
+      0%   { transform:scale(1);   opacity:0.75 }
+      80%  { transform:scale(3.8); opacity:0    }
+      100% { transform:scale(3.8); opacity:0    }
+    }
+    @keyframes radarPulse2 {
+      0%   { transform:scale(1);   opacity:0.45 }
+      80%  { transform:scale(2.4); opacity:0    }
+      100% { transform:scale(2.4); opacity:0    }
+    }
+    @keyframes coreBlink {
+      0%,100% { opacity:1;   transform:scale(1)    }
+      50%     { opacity:0.7; transform:scale(0.92) }
+    }
+    @keyframes selGlow {
+      0%,100% { box-shadow: var(--sel-glow-a) }
+      50%     { box-shadow: var(--sel-glow-b) }
+    }
+    .rp-ring1 { animation: radarPulse  2.2s cubic-bezier(0,0.6,0.4,1)        infinite; transform-origin:center; }
+    .rp-ring2 { animation: radarPulse2 2.2s cubic-bezier(0,0.6,0.4,1) 0.9s   infinite; transform-origin:center; }
+    .rp-core  { animation: coreBlink   2.4s ease-in-out                        infinite; }
+    .rp-sel   { animation: selGlow     1.8s ease-in-out                        infinite; }
   `;
   document.head.appendChild(s);
 }
 
-export default function StratMap({ deposits, selectedId, onSelect, onMapReady }: Props) {
+export default function StratMap({ deposits = [], selectedId, onSelect, onMapReady }: Props) {
   const containerRef   = useRef<HTMLDivElement>(null);
   const mapRef         = useRef<any>(null);
   const markerLayerRef = useRef<any>(null);
   const leafletRef     = useRef<any>(null);
   const initDone       = useRef(false);
+  // Tracks whether initMap() has fully completed — used to re-trigger
+  // marker drawing after the async init resolves (fixes the race where
+  // deposits arrive before markerLayerRef is populated).
+  const [mapReady, setMapReady] = useState(false);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -123,6 +176,18 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
         maxZoom: 19,
       }).addTo(map);
 
+      // Dark ocean overlay — sits in the overlayPane which is above tiles but below markers.
+      // This deepens the ocean without affecting land/coast labels from the tile layer.
+      const overlayEl = document.createElement('div');
+      overlayEl.style.cssText = `
+        position:absolute;inset:0;pointer-events:none;z-index:200;
+        background:radial-gradient(ellipse at 50% 60%,
+          rgba(0,8,20,0.0) 0%,
+          rgba(0,8,20,0.35) 55%,
+          rgba(0,4,14,0.55) 100%);
+      `;
+      map.getPanes().overlayPane.appendChild(overlayEl);
+
       L.control.zoom({ position: 'bottomright' }).addTo(map);
 
       // Natural Earth — glowing cyan country borders + dark land fill
@@ -145,43 +210,44 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
         }).addTo(map);
       } catch { /* tiles still work */ }
 
-      // Intelligence graticule — subtle cyan grid
+      // Intelligence graticule — very subtle, not neon
       const grid = L.layerGroup().addTo(map);
-      const gStyle  = { color: 'rgba(0,220,255,0.08)', weight: 0.5 };
-      const eqStyle = { color: 'rgba(0,220,255,0.28)', weight: 1.0 };
-      const pmStyle = { color: 'rgba(0,220,255,0.22)', weight: 0.8 };
+      const gStyle  = { color: 'rgba(0,200,255,0.06)', weight: 0.4 };
+      const eqStyle = { color: 'rgba(0,200,255,0.18)', weight: 0.7 };
+      const pmStyle = { color: 'rgba(0,200,255,0.14)', weight: 0.6 };
 
       [-90,-60,-30,0,30,60,90].forEach(lat => {
         L.polyline([[lat,-180],[lat,180]], lat===0 ? eqStyle : gStyle).addTo(grid);
         if (lat===0) {
-          L.marker([1.8,-174], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:8px;color:rgba(0,220,255,0.55);letter-spacing:1.2px;white-space:nowrap;text-shadow:0 0 8px rgba(0,220,255,0.5)">EQUATOR</span>`, className:'', iconAnchor:[0,0] as any }), interactive:false }).addTo(grid);
-        } else if (Math.abs(lat)<=60) {
-          L.marker([lat,-177], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:7px;color:rgba(0,220,255,0.28);white-space:nowrap">${Math.abs(lat)}°${lat>0?'N':'S'}</span>`, className:'', iconAnchor:[0,6] as any }), interactive:false }).addTo(grid);
+          L.marker([1.8,-174], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:8px;color:rgba(0,200,255,0.38);letter-spacing:1.2px;white-space:nowrap">EQUATOR</span>`, className:'', iconAnchor:[0,0] as any }), interactive:false }).addTo(grid);
+        } else if (lat !== -90 && lat !== 90) {
+          L.marker([lat,-177], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:7px;color:rgba(0,200,255,0.18);white-space:nowrap">${Math.abs(lat)}°${lat>0?'N':'S'}</span>`, className:'', iconAnchor:[0,6] as any }), interactive:false }).addTo(grid);
         }
       });
       [-180,-120,-60,0,60,120,180].forEach(lon => {
         L.polyline([[-85,lon],[85,lon]], lon===0 ? pmStyle : gStyle).addTo(grid);
         if (lon===0) {
-          L.marker([79,1], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:8px;color:rgba(0,220,255,0.5);letter-spacing:.8px;white-space:nowrap;text-shadow:0 0 8px rgba(0,220,255,0.4)">0°</span>`, className:'', iconAnchor:[0,0] as any }), interactive:false }).addTo(grid);
-        } else if (Math.abs(lon) <= 120) {
-          L.marker([-87,lon], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:7px;color:rgba(0,220,255,0.22);white-space:nowrap">${Math.abs(lon)}°${lon>0?'E':'W'}</span>`, className:'', iconAnchor:[12,0] as any }), interactive:false }).addTo(grid);
+          L.marker([79,1], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:8px;color:rgba(0,200,255,0.35);letter-spacing:.8px;white-space:nowrap">0°</span>`, className:'', iconAnchor:[0,0] as any }), interactive:false }).addTo(grid);
+        } else if (Math.abs(lon) <= 120 && lon !== -180 && lon !== 180) {
+          L.marker([-87,lon], { icon: L.divIcon({ html:`<span style="font-family:Inter,sans-serif;font-size:7px;color:rgba(0,200,255,0.16);white-space:nowrap">${Math.abs(lon)}°${lon>0?'E':'W'}</span>`, className:'', iconAnchor:[12,0] as any }), interactive:false }).addTo(grid);
         }
       });
 
-      // Ocean labels — exact spec: uppercase, 6px letter-spacing, rgba(0,220,255,0.45), 13px
-      const OL = `font-family:Inter,sans-serif;font-size:13px;font-weight:500;color:rgba(0,220,255,0.45);letter-spacing:6px;text-transform:uppercase;white-space:nowrap;pointer-events:none;text-shadow:0 0 20px rgba(0,220,255,0.15)`;
+      // Ocean labels — muted cyan, wide letter-spacing, low opacity, pointer-events none
+      const OL = `font-family:Inter,sans-serif;font-size:11px;font-weight:400;color:rgba(0,195,255,0.28);letter-spacing:5px;text-transform:uppercase;white-space:nowrap;pointer-events:none;user-select:none`;
       [
-        { lat:45,  lon:-38,   text:'NORTH ATLANTIC OCEAN' },
-        { lat:-28, lon:-23,   text:'SOUTH ATLANTIC OCEAN' },
-        { lat:-8,  lon:72,    text:'INDIAN OCEAN' },
-        { lat:-50, lon:40,    text:'SOUTHERN OCEAN' },
-        { lat:78,  lon:-15,   text:'ARCTIC OCEAN' },
-        { lat:-25, lon:-115,  text:'SOUTH PACIFIC OCEAN' },
-        { lat:35,  lon:160,   text:'NORTH PACIFIC OCEAN' },
+        { lat:44,  lon:-38,  text:'NORTH ATLANTIC OCEAN' },
+        { lat:-28, lon:-25,  text:'SOUTH ATLANTIC OCEAN' },
+        { lat:-8,  lon:74,   text:'INDIAN OCEAN'         },
+        { lat:-52, lon:42,   text:'SOUTHERN OCEAN'       },
+        { lat:76,  lon:-20,  text:'ARCTIC OCEAN'         },
+        { lat:-26, lon:-118, text:'SOUTH PACIFIC OCEAN'  },
+        { lat:33,  lon:162,  text:'NORTH PACIFIC OCEAN'  },
       ].forEach(({ lat, lon, text }) => {
         L.marker([lat, lon], {
-          icon: L.divIcon({ html:`<span style="${OL}">${text}</span>`, className:'', iconAnchor:[60,8] as any }),
+          icon: L.divIcon({ html:`<span style="${OL}">${text}</span>`, className:'', iconAnchor:[55,8] as any }),
           interactive: false,
+          zIndexOffset: -1000,
         }).addTo(grid);
       });
 
@@ -195,6 +261,10 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
           map.flyTo([lat, lon], zoom, { duration: 1.2 });
         });
       }
+
+      // Signal that the map and marker layer are ready.
+      // This triggers the marker useEffect to run with current deposits.
+      setMapReady(true);
     };
 
     initMap().catch(console.error);
@@ -204,10 +274,14 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
       markerLayerRef.current = null;
       leafletRef.current = null;
       initDone.current = false;
+      setMapReady(false);
     };
   }, [mounted]);
 
   // ── Redraw radar markers ──────────────────────────────────────
+  // Depends on mapReady so this re-runs once the async initMap()
+  // finishes — preventing the race condition where deposits arrive
+  // before markerLayerRef is populated.
   useEffect(() => {
     const L     = leafletRef.current;
     const layer = markerLayerRef.current;
@@ -215,7 +289,9 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
 
     layer.clearLayers();
 
-    deposits.forEach(dep => {
+    console.log('Deposits loaded:', (deposits ?? []).length);
+
+    (deposits ?? []).forEach(dep => {
       const color  = getMineralColor(dep.primary_mineral);
       const r      = markerRadius(dep.resource_size_tonnes);
       const isSel  = dep.id === selectedId;
@@ -299,12 +375,12 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
       mapRef.current?.closePopup();
       onSelect(id);
     };
-  }, [deposits, selectedId, onSelect]);
+  }, [deposits, selectedId, onSelect, mapReady]);
 
   // ── Fly to selected ──────────────────────────────────────────
   useEffect(() => {
     if (!mapRef.current || !selectedId) return;
-    const dep = deposits.find(d => d.id === selectedId);
+    const dep = (deposits ?? []).find(d => d.id === selectedId);
     if (!dep) return;
     mapRef.current.flyTo([dep.latitude, dep.longitude], Math.max(mapRef.current.getZoom(), 5), { duration: 0.8 });
   }, [selectedId, deposits]);
@@ -318,6 +394,6 @@ export default function StratMap({ deposits, selectedId, onSelect, onMapReady }:
   }
 
   return (
-    <div ref={containerRef} style={{ width:'100%', height:'100%', background:'#05070b' }} aria-label="StrataLand mineral deposit map" />
+    <div ref={containerRef} style={{ width:'100%', height:'100%', background:'#010a12' }} aria-label="StrataLand mineral deposit map" />
   );
 }

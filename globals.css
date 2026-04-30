@@ -58,9 +58,9 @@ html, body {
   cursor: crosshair !important;
 }
 
-/* Tile layer: shift Carto Dark Matter toward deep ocean navy */
+/* Tile layer: shift Carto Dark Matter toward deep navy ocean */
 .leaflet-tile-pane {
-  filter: hue-rotate(170deg) saturate(1.35) brightness(0.80) contrast(1.08);
+  filter: hue-rotate(195deg) saturate(0.9) brightness(0.72) contrast(1.15);
 }
 
 /* Popups */

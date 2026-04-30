@@ -93,7 +93,7 @@ export const DEPOSITS: Deposit[] = [
   {
     id:'ken', name:'Kenticha Lithium-Tantalum',
     country:'Ethiopia', region:'Oromia Region',
-    latitude:5.5800, longitude:39.7300,
+    latitude:6.9000, longitude:39.2000,
     primary_mineral:'Lithium', secondary_minerals:['Tantalum'],
     deposit_type:'LCT Pegmatite', status:'exploration', development_stage:'feasibility',
     resource_size_tonnes:45000000, grade_percent:1.08, grade_unit:'% Li₂O',
