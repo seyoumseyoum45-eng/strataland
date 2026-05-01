@@ -268,6 +268,8 @@ export default function AppShell() {
   // No API calls. No backend. Pure computed values from local data.
   const [alertsOpen, setAlertsOpen] = useState(false);
   const alertBellRef = useRef<HTMLDivElement>(null);
+  const [bellRect, setBellRect] = useState<{ top: number; right: number }>({ top: 60, right: 16 });
+  const [alertFilter, setAlertFilter] = useState<'all'|'critical'|'warning'|'info'>('all');
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -345,7 +347,14 @@ export default function AppShell() {
           {/* Alert bell */}
           <div ref={alertBellRef} style={{ position:'relative' }}>
             <div
-              onClick={() => setAlertsOpen(v => !v)}
+              onClick={() => {
+                if (!alertsOpen && alertBellRef.current) {
+                  // Capture bell position so the fixed dropdown can anchor under it
+                  const r = alertBellRef.current.getBoundingClientRect();
+                  setBellRect({ top: r.bottom + 8, right: window.innerWidth - r.right });
+                }
+                setAlertsOpen(v => !v);
+              }}
               style={{ width:34, height:34, borderRadius:8, background: alertsOpen ? 'rgba(0,234,255,0.1)' : '#0f1623', border:`1px solid ${alertsOpen ? 'rgba(0,234,255,0.3)' : 'rgba(255,255,255,0.07)'}`, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color: alertsOpen ? '#00eaff' : '#94a3b8', position:'relative', transition:'all .15s', userSelect:'none' }}
             >
               🔔
@@ -356,78 +365,6 @@ export default function AppShell() {
                 </span>
               )}
             </div>
-
-            {/* Dropdown */}
-            {alertsOpen && (
-              <div
-                onClick={e => e.stopPropagation()}
-                style={{ position:'absolute', top:42, right:0, width:380, maxHeight:480, background:'#0b0f17', border:'1px solid rgba(0,234,255,0.18)', borderRadius:12, boxShadow:'0 8px 40px rgba(0,0,0,0.7), 0 0 24px rgba(0,234,255,0.05)', zIndex:1000, display:'flex', flexDirection:'column', overflow:'hidden' }}
-              >
-                {/* Dropdown header */}
-                <div style={{ padding:'12px 16px 10px', borderBottom:'1px solid rgba(255,255,255,0.06)', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
-                  <div>
-                    <div style={{ fontSize:10, color:'#00eaff', letterSpacing:'1.5px', fontWeight:700 }}>ALERT ENGINE</div>
-                    <div style={{ fontSize:10, color:'#334155', marginTop:1 }}>{alerts.length} alert{alerts.length !== 1 ? 's' : ''} · auto-generated from deposit scores</div>
-                  </div>
-                  <div style={{ display:'flex', gap:6 }}>
-                    {[['critical','#ef4444'], ['warning','#f6b93b'], ['info','#3f8cff']].map(([lvl, col]) => {
-                      const n = alerts.filter(a => a.level === lvl).length;
-                      return n > 0 ? (
-                        <span key={lvl} style={{ padding:'2px 7px', background:`${col}18`, border:`1px solid ${col}40`, borderRadius:10, fontSize:9, fontWeight:700, color:col, letterSpacing:.3 }}>
-                          {n} {lvl}
-                        </span>
-                      ) : null;
-                    })}
-                  </div>
-                </div>
-
-                {/* Alert list */}
-                <div style={{ overflowY:'auto', flex:1 }}>
-                  {alerts.length === 0 ? (
-                    <div style={{ padding:24, textAlign:'center', color:'#334155', fontSize:12 }}>No alerts triggered</div>
-                  ) : alerts.map(alert => {
-                    const lvlColor = alert.level === 'critical' ? '#ef4444' : alert.level === 'warning' ? '#f6b93b' : '#3f8cff';
-                    const minColor = MINERAL_COLORS[alert.mineral] || '#94a3b8';
-                    return (
-                      <div
-                        key={alert.id}
-                        onClick={() => {
-                          // Find deposit and select it
-                          const dep = DEPOSITS.find(d => d.primary_mineral === alert.mineral && d.country === alert.country);
-                          if (dep) { setSelectedId(dep.id); setAlertsOpen(false); }
-                        }}
-                        style={{ padding:'10px 16px', borderBottom:'1px solid rgba(255,255,255,0.04)', cursor:'pointer', transition:'background .1s', display:'flex', gap:10, alignItems:'flex-start' }}
-                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
-                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
-                      >
-                        {/* Level indicator */}
-                        <div style={{ width:3, borderRadius:2, background:lvlColor, alignSelf:'stretch', flexShrink:0, minHeight:36, boxShadow:`0 0 6px ${lvlColor}60` }}/>
-                        <div style={{ flex:1, minWidth:0 }}>
-                          {/* Category + mineral badge row */}
-                          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3, flexWrap:'wrap' }}>
-                            <span style={{ fontSize:10, fontWeight:700, color:lvlColor, letterSpacing:.4 }}>
-                              {alert.level.toUpperCase()} · {alert.category.toUpperCase()}
-                            </span>
-                            <span style={{ padding:'1px 7px', background:`${minColor}14`, border:`1px solid ${minColor}35`, borderRadius:10, fontSize:9, color:minColor, fontWeight:600 }}>
-                              {alert.mineral}
-                            </span>
-                          </div>
-                          {/* Message */}
-                          <div style={{ fontSize:11, color:'#64748b', lineHeight:1.45, marginBottom:2 }}>{alert.message}</div>
-                          {/* Country */}
-                          <div style={{ fontSize:10, color:'#334155' }}>📍 {alert.country}</div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Footer */}
-                <div style={{ padding:'8px 16px', borderTop:'1px solid rgba(255,255,255,0.05)', fontSize:10, color:'#1e3a4a', flexShrink:0 }}>
-                  Alerts are derived from local deposit scores · No external data
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Static utility icons */}
@@ -1061,6 +998,123 @@ export default function AppShell() {
         ))}
         </div>
       </div>
+
+      {/* ══════════ ALERT DROPDOWN (position:fixed — escapes all stacking contexts) ══════════ */}
+      {alertsOpen && (() => {
+        // Apply level filter then cap at 10 for display. Bell badge always shows total.
+        const displayed = (alertFilter === 'all' ? alerts : alerts.filter(a => a.level === alertFilter)).slice(0, 10);
+        const counts = { critical: alerts.filter(a=>a.level==='critical').length, warning: alerts.filter(a=>a.level==='warning').length, info: alerts.filter(a=>a.level==='info').length };
+
+        return (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{ position:'fixed', top:bellRect.top, right:bellRect.right, width:390, maxHeight:520, background:'#0b0f17', border:'1px solid rgba(0,234,255,0.18)', borderRadius:12, boxShadow:'0 8px 40px rgba(0,0,0,0.7), 0 0 24px rgba(0,234,255,0.05)', zIndex:99999, display:'flex', flexDirection:'column', overflow:'hidden' }}
+          >
+            {/* Header */}
+            <div style={{ padding:'12px 16px 10px', borderBottom:'1px solid rgba(255,255,255,0.06)', flexShrink:0 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+                <div>
+                  <div style={{ fontSize:10, color:'#00eaff', letterSpacing:'1.5px', fontWeight:700 }}>ALERT ENGINE</div>
+                  <div style={{ fontSize:10, color:'#334155', marginTop:1 }}>
+                    {alerts.length} total · showing top {Math.min(displayed.length, 10)}
+                    {alertFilter !== 'all' ? ` ${alertFilter}` : ''}
+                  </div>
+                </div>
+                {/* Close button */}
+                <button
+                  onClick={() => { setAlertsOpen(false); setAlertFilter('all'); }}
+                  style={{ width:24, height:24, borderRadius:6, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', color:'#475569', fontSize:13, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', fontFamily:'Inter,sans-serif', transition:'all .15s', flexShrink:0 }}
+                  onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.color='#fff';}}
+                  onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.color='#475569';}}
+                >✕</button>
+              </div>
+
+              {/* Filter chips */}
+              <div style={{ display:'flex', gap:5 }}>
+                {([
+                  ['all',      'All',      '#00eaff', alerts.length],
+                  ['critical', 'Critical', '#ef4444', counts.critical],
+                  ['warning',  'Warning',  '#f6b93b', counts.warning],
+                  ['info',     'Info',     '#3f8cff', counts.info],
+                ] as ['all'|'critical'|'warning'|'info', string, string, number][]).map(([val, label, col, n]) => {
+                  const active = alertFilter === val;
+                  return (
+                    <button
+                      key={val}
+                      onClick={() => setAlertFilter(val)}
+                      style={{
+                        padding:'3px 10px', borderRadius:20, fontSize:10, fontWeight:active ? 700 : 500,
+                        background: active ? `${col}20` : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${active ? col : 'rgba(255,255,255,0.07)'}`,
+                        color: active ? col : '#475569',
+                        cursor:'pointer', fontFamily:'Inter,sans-serif', transition:'all .12s',
+                        display:'flex', alignItems:'center', gap:4,
+                      }}
+                    >
+                      {label}
+                      <span style={{ padding:'0px 4px', borderRadius:8, background: active ? `${col}25` : 'rgba(255,255,255,0.06)', fontSize:9, fontWeight:700, color: active ? col : '#334155' }}>
+                        {n}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Alert list — top 10 of filtered set */}
+            <div style={{ overflowY:'auto', flex:1 }}>
+              {displayed.length === 0 ? (
+                <div style={{ padding:24, textAlign:'center', color:'#334155', fontSize:12 }}>No {alertFilter === 'all' ? '' : alertFilter} alerts</div>
+              ) : displayed.map((alert, idx) => {
+                const lvlColor = alert.level === 'critical' ? '#ef4444' : alert.level === 'warning' ? '#f6b93b' : '#3f8cff';
+                const minColor = MINERAL_COLORS[alert.mineral] || '#94a3b8';
+                return (
+                  <div
+                    key={alert.id}
+                    onClick={() => {
+                      const dep = DEPOSITS.find(d => d.primary_mineral === alert.mineral && d.country === alert.country);
+                      if (dep) {
+                        setSelectedId(dep.id);
+                        if (mapFlyToRef.current) mapFlyToRef.current(dep.latitude, dep.longitude, 5);
+                        setAlertsOpen(false);
+                        setAlertFilter('all');
+                      }
+                    }}
+                    style={{ padding:'9px 16px', borderBottom:'1px solid rgba(255,255,255,0.04)', cursor:'pointer', transition:'background .1s', display:'flex', gap:10, alignItems:'flex-start' }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                  >
+                    {/* Rank number */}
+                    <div style={{ fontSize:9, color:'#1e3a4a', fontWeight:700, minWidth:14, paddingTop:2, textAlign:'right', flexShrink:0 }}>{idx + 1}</div>
+                    {/* Severity bar */}
+                    <div style={{ width:3, borderRadius:2, background:lvlColor, alignSelf:'stretch', flexShrink:0, minHeight:32, boxShadow:`0 0 5px ${lvlColor}50` }}/>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:5, marginBottom:2, flexWrap:'wrap' }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:lvlColor, letterSpacing:.3 }}>
+                          {alert.category.toUpperCase()}
+                        </span>
+                        <span style={{ padding:'1px 6px', background:`${minColor}14`, border:`1px solid ${minColor}30`, borderRadius:10, fontSize:9, color:minColor, fontWeight:600 }}>
+                          {alert.mineral}
+                        </span>
+                      </div>
+                      <div style={{ fontSize:11, color:'#64748b', lineHeight:1.4, marginBottom:1 }}>{alert.message}</div>
+                      <div style={{ fontSize:10, color:'#334155' }}>📍 {alert.country}</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding:'7px 16px', borderTop:'1px solid rgba(255,255,255,0.05)', fontSize:10, color:'#1e3a4a', flexShrink:0, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <span>Derived from local deposit scores · No external data</span>
+              {alerts.length > 10 && alertFilter === 'all' && (
+                <span style={{ color:'#334155' }}>+{alerts.length - 10} more</span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ══════════ INTELLIGENCE MODAL ══════════ */}
       {modalOpen && selectedDep && (() => {
