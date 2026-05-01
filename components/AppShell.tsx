@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import dynamic from 'next/dynamic';
 import type { Deposit } from '../types';
 import { DEPOSITS, computeKPIs, isAfrica, getPaleoContext } from '../lib/localData';
+import PaleoExplorer from './PaleoExplorer';
 
 const StratMap = dynamic(() => import('../components/StratMap'), {
   ssr: false,
@@ -24,9 +25,10 @@ const MINERAL_COLORS: Record<string,string> = {
 // ── Sidebar nav items ─────────────────────────────────────────
 const NAV = [
   { section:'PLATFORM', items:[
-    { id:'dashboard', label:'Dashboard',       icon:'⊞' },
-    { id:'map',       label:'Global Map',       icon:'◎' },
-    { id:'watchlist', label:'Watchlist',        icon:'★' },
+    { id:'dashboard',     label:'Dashboard',         icon:'⊞' },
+    { id:'map',           label:'Global Map',         icon:'◎' },
+    { id:'paleo',         label:'Paleo Explorer',     icon:'🌍' },
+    { id:'watchlist',     label:'Watchlist',          icon:'★' },
   ]},
   { section:'REGIONS', items:[
     { id:'africa',    label:'Africa Focus',     icon:'🌍', accent:'#22d3ee' },
@@ -651,6 +653,13 @@ export default function AppShell() {
 
         {/* ── CENTER CONTENT (switches by activePage) ── */}
         <div style={{ flex:1, position:'relative', minWidth:0, display:'flex', flexDirection:'column' }}>
+
+          {/* ── PALEO EXPLORER ── */}
+          {activePage === 'paleo' && (
+            <div style={{ flex:1, overflow:'hidden', display:'flex', flexDirection:'column' }}>
+              <PaleoExplorer />
+            </div>
+          )}
 
           {/* ── GLOBAL MAP (default + mineral filter pages) ── */}
           {(activePage === 'map' || activePage === 'africa' ||
