@@ -263,6 +263,42 @@ export default function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [modalOpen]);
 
+  // ── Alert engine ───────────────────────────────────────────────
+  // Alerts are derived from DEPOSITS using fixed trigger rules.
+  // No API calls. No backend. Pure computed values from local data.
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const alertBellRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!alertsOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (alertBellRef.current && !alertBellRef.current.contains(e.target as Node))
+        setAlertsOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [alertsOpen]);
+
+  interface Alert { id: string; level: 'critical'|'warning'|'info'; category: string; message: string; mineral: string; country: string; }
+
+  const alerts: Alert[] = useMemo(() => {
+    const out: Alert[] = [];
+    DEPOSITS.forEach(dep => {
+      if (dep.opportunity_score > 80)
+        out.push({ id:`opp-${dep.id}`, level:'info', category:'High Opportunity', message:`Opportunity score ${dep.opportunity_score} — significant upside flagged`, mineral:dep.primary_mineral, country:dep.country });
+      if (dep.country_risk_score > 70)
+        out.push({ id:`risk-${dep.id}`, level:'critical', category:'Country Risk', message:`Country risk score ${dep.country_risk_score} — elevated geopolitical exposure`, mineral:dep.primary_mineral, country:dep.country });
+      if (dep.data_confidence === 'low')
+        out.push({ id:`conf-${dep.id}`, level:'warning', category:'Low Confidence', message:`Data confidence LOW — independent verification required`, mineral:dep.primary_mineral, country:dep.country });
+      if (dep.infrastructure_score > 60 && dep.status !== 'producing')
+        out.push({ id:`infra-${dep.id}`, level:'info', category:'Infrastructure Ready', message:`Infrastructure score ${dep.infrastructure_score} — development-ready conditions`, mineral:dep.primary_mineral, country:dep.country });
+    });
+    // Sort: critical first, then warning, then info
+    const order = { critical:0, warning:1, info:2 };
+    return out.sort((a, b) => order[a.level] - order[b.level]);
+  }, []);
+
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', width:'100vw', background:'#05070b', overflow:'hidden', fontFamily:'Inter,sans-serif' }}>
 
@@ -305,7 +341,97 @@ export default function AppShell() {
 
         {/* Right icons */}
         <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-          {['🔔','⚡','?'].map((ic,i) => (
+
+          {/* Alert bell */}
+          <div ref={alertBellRef} style={{ position:'relative' }}>
+            <div
+              onClick={() => setAlertsOpen(v => !v)}
+              style={{ width:34, height:34, borderRadius:8, background: alertsOpen ? 'rgba(0,234,255,0.1)' : '#0f1623', border:`1px solid ${alertsOpen ? 'rgba(0,234,255,0.3)' : 'rgba(255,255,255,0.07)'}`, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color: alertsOpen ? '#00eaff' : '#94a3b8', position:'relative', transition:'all .15s', userSelect:'none' }}
+            >
+              🔔
+              {/* Badge */}
+              {alerts.length > 0 && (
+                <span style={{ position:'absolute', top:-4, right:-4, width:16, height:16, borderRadius:'50%', background:'#ef4444', fontSize:9, fontWeight:700, color:'#fff', display:'flex', alignItems:'center', justifyContent:'center', border:'1.5px solid #05070b', letterSpacing:-.3, lineHeight:1 }}>
+                  {alerts.length > 9 ? '9+' : alerts.length}
+                </span>
+              )}
+            </div>
+
+            {/* Dropdown */}
+            {alertsOpen && (
+              <div
+                onClick={e => e.stopPropagation()}
+                style={{ position:'absolute', top:42, right:0, width:380, maxHeight:480, background:'#0b0f17', border:'1px solid rgba(0,234,255,0.18)', borderRadius:12, boxShadow:'0 8px 40px rgba(0,0,0,0.7), 0 0 24px rgba(0,234,255,0.05)', zIndex:1000, display:'flex', flexDirection:'column', overflow:'hidden' }}
+              >
+                {/* Dropdown header */}
+                <div style={{ padding:'12px 16px 10px', borderBottom:'1px solid rgba(255,255,255,0.06)', display:'flex', alignItems:'center', justifyContent:'space-between', flexShrink:0 }}>
+                  <div>
+                    <div style={{ fontSize:10, color:'#00eaff', letterSpacing:'1.5px', fontWeight:700 }}>ALERT ENGINE</div>
+                    <div style={{ fontSize:10, color:'#334155', marginTop:1 }}>{alerts.length} alert{alerts.length !== 1 ? 's' : ''} · auto-generated from deposit scores</div>
+                  </div>
+                  <div style={{ display:'flex', gap:6 }}>
+                    {[['critical','#ef4444'], ['warning','#f6b93b'], ['info','#3f8cff']].map(([lvl, col]) => {
+                      const n = alerts.filter(a => a.level === lvl).length;
+                      return n > 0 ? (
+                        <span key={lvl} style={{ padding:'2px 7px', background:`${col}18`, border:`1px solid ${col}40`, borderRadius:10, fontSize:9, fontWeight:700, color:col, letterSpacing:.3 }}>
+                          {n} {lvl}
+                        </span>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+
+                {/* Alert list */}
+                <div style={{ overflowY:'auto', flex:1 }}>
+                  {alerts.length === 0 ? (
+                    <div style={{ padding:24, textAlign:'center', color:'#334155', fontSize:12 }}>No alerts triggered</div>
+                  ) : alerts.map(alert => {
+                    const lvlColor = alert.level === 'critical' ? '#ef4444' : alert.level === 'warning' ? '#f6b93b' : '#3f8cff';
+                    const minColor = MINERAL_COLORS[alert.mineral] || '#94a3b8';
+                    return (
+                      <div
+                        key={alert.id}
+                        onClick={() => {
+                          // Find deposit and select it
+                          const dep = DEPOSITS.find(d => d.primary_mineral === alert.mineral && d.country === alert.country);
+                          if (dep) { setSelectedId(dep.id); setAlertsOpen(false); }
+                        }}
+                        style={{ padding:'10px 16px', borderBottom:'1px solid rgba(255,255,255,0.04)', cursor:'pointer', transition:'background .1s', display:'flex', gap:10, alignItems:'flex-start' }}
+                        onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
+                        onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                      >
+                        {/* Level indicator */}
+                        <div style={{ width:3, borderRadius:2, background:lvlColor, alignSelf:'stretch', flexShrink:0, minHeight:36, boxShadow:`0 0 6px ${lvlColor}60` }}/>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          {/* Category + mineral badge row */}
+                          <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:3, flexWrap:'wrap' }}>
+                            <span style={{ fontSize:10, fontWeight:700, color:lvlColor, letterSpacing:.4 }}>
+                              {alert.level.toUpperCase()} · {alert.category.toUpperCase()}
+                            </span>
+                            <span style={{ padding:'1px 7px', background:`${minColor}14`, border:`1px solid ${minColor}35`, borderRadius:10, fontSize:9, color:minColor, fontWeight:600 }}>
+                              {alert.mineral}
+                            </span>
+                          </div>
+                          {/* Message */}
+                          <div style={{ fontSize:11, color:'#64748b', lineHeight:1.45, marginBottom:2 }}>{alert.message}</div>
+                          {/* Country */}
+                          <div style={{ fontSize:10, color:'#334155' }}>📍 {alert.country}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Footer */}
+                <div style={{ padding:'8px 16px', borderTop:'1px solid rgba(255,255,255,0.05)', fontSize:10, color:'#1e3a4a', flexShrink:0 }}>
+                  Alerts are derived from local deposit scores · No external data
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Static utility icons */}
+          {(['⚡','?'] as const).map((ic, i) => (
             <div key={i} style={{ width:34, height:34, borderRadius:8, background:'#0f1623', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color:'#94a3b8' }}>{ic}</div>
           ))}
           <div style={{ width:34, height:34, borderRadius:'50%', background:'linear-gradient(135deg,#00ffd5,#0088aa)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#05070b', cursor:'pointer', marginLeft:4 }}>SA</div>
@@ -1180,7 +1306,7 @@ export default function AppShell() {
                               color:       typeColor[src.type] || '#94a3b8',
                             }}>{src.type}</span>
                           </div>
-                          <div style={{ fontSize:12, color:'#475569' }}>{src.year}</div>
+                          <div style={{ fontSize:12, color:'#475569' }}>{(src.year && !isNaN(src.year)) ? src.year : dep.last_updated_year}</div>
                           <div style={{ fontSize:11, fontWeight:600, color: srcConfColor[src.confidence] || '#94a3b8' }}>
                             {src.confidence}
                           </div>
