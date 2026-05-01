@@ -198,7 +198,7 @@ export default function AppShell() {
     }
     if (activeMineral) d = d.filter(x => x.primary_mineral === activeMineral);
     if (africaFilter)  d = d.filter(x => isAfrica(x));
-    if (timelineYear < YEAR_MAX) d = d.filter(x => x.last_updated_year <= timelineYear);
+    if (timelineYear < YEAR_MAX) d = d.filter(x => (x.last_updated_year ?? YEAR_MIN) <= timelineYear);
 
     if (sortBy === 'opp')  d = [...d].sort((a, b) => b.opportunity_score - a.opportunity_score);
     if (sortBy === 'diff') d = [...d].sort((a, b) => a.difficulty_score  - b.difficulty_score);
@@ -242,14 +242,21 @@ export default function AppShell() {
   const handleNav = useCallback((id: string) => {
     setActivePage(id);
     const mineralMap: Record<string,string> = { lithium:'Lithium', copper:'Copper', cobalt:'Cobalt', nickel:'Nickel', 'rare-earths':'Rare Earths', uranium:'Uranium', graphite:'Graphite', manganese:'Manganese' };
-    if (mineralMap[id]) { setActiveMineral(mineralMap[id]); setAfricaFilter(false); }
-    else if (id === 'map' || id === 'dashboard') { setActiveMineral(null); setAfricaFilter(false); }
-    else if (id === 'africa') {
+    if (mineralMap[id]) {
+      setActiveMineral(mineralMap[id]);
+      setAfricaFilter(false);
+    } else if (id === 'map') {
+      setActiveMineral(null);
+      setAfricaFilter(false);
+    } else if (id === 'dashboard') {
+      setActiveMineral(null);
+      setAfricaFilter(false);
+    } else if (id === 'africa') {
       setActiveMineral(null);
       setAfricaFilter(true);
-      // Fly to Africa centre
       if (mapFlyToRef.current) mapFlyToRef.current(5, 22, 4);
     }
+    // All other sidebar pages: keep current filters, just switch page
   }, []);
 
   const mc = selectedDep ? (MINERAL_COLORS[selectedDep.primary_mineral] || '#00eaff') : '#00eaff';
@@ -267,36 +274,66 @@ export default function AppShell() {
   // Alerts are derived from DEPOSITS using fixed trigger rules.
   // No API calls. No backend. Pure computed values from local data.
   const [alertsOpen, setAlertsOpen] = useState(false);
-  const alertBellRef = useRef<HTMLDivElement>(null);
+  const alertBellRef    = useRef<HTMLDivElement>(null);
+  const alertDropdownRef = useRef<HTMLDivElement>(null);
   const [bellRect, setBellRect] = useState<{ top: number; right: number }>({ top: 60, right: 16 });
   const [alertFilter, setAlertFilter] = useState<'all'|'critical'|'warning'|'info'>('all');
 
-  // Close dropdown when clicking outside
+  const [sysPulseOpen, setSysPulseOpen] = useState(false);
+  const sysPulseRef = useRef<HTMLDivElement>(null);
+  const [helpOpen,    setHelpOpen]     = useState(false);
+  const helpRef      = useRef<HTMLDivElement>(null);
+
+  // Close system-pulse and help dropdowns on outside click
+  useEffect(() => {
+    if (!sysPulseOpen && !helpOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (sysPulseOpen && !sysPulseRef.current?.contains(e.target as Node)) setSysPulseOpen(false);
+      if (helpOpen     && !helpRef.current?.contains(e.target as Node))     setHelpOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [sysPulseOpen, helpOpen]);
+
+  // Close dropdown when clicking outside BOTH the bell and the dropdown panel.
+  // Without checking alertDropdownRef, every click inside the fixed dropdown
+  // (chips, rows) fires this handler first and collapses the panel before
+  // the element's own onClick runs, making all interactions appear broken.
   useEffect(() => {
     if (!alertsOpen) return;
     const handler = (e: MouseEvent) => {
-      if (alertBellRef.current && !alertBellRef.current.contains(e.target as Node))
-        setAlertsOpen(false);
+      const inBell     = alertBellRef.current?.contains(e.target as Node);
+      const inDropdown = alertDropdownRef.current?.contains(e.target as Node);
+      if (!inBell && !inDropdown) setAlertsOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [alertsOpen]);
 
-  interface Alert { id: string; level: 'critical'|'warning'|'info'; category: string; message: string; mineral: string; country: string; }
+  // depositId stored on every alert so row clicks can find the deposit
+  // by exact id rather than a fragile mineral+country lookup.
+  interface Alert {
+    id: string;
+    depositId: string;
+    level: 'critical'|'warning'|'info';
+    category: string;
+    message: string;
+    mineral: string;
+    country: string;
+  }
 
   const alerts: Alert[] = useMemo(() => {
     const out: Alert[] = [];
     DEPOSITS.forEach(dep => {
       if (dep.opportunity_score > 80)
-        out.push({ id:`opp-${dep.id}`, level:'info', category:'High Opportunity', message:`Opportunity score ${dep.opportunity_score} — significant upside flagged`, mineral:dep.primary_mineral, country:dep.country });
+        out.push({ id:`opp-${dep.id}`, depositId:dep.id, level:'info',     category:'High Opportunity',   message:`Opportunity score ${dep.opportunity_score} — significant upside flagged`,       mineral:dep.primary_mineral, country:dep.country });
       if (dep.country_risk_score > 70)
-        out.push({ id:`risk-${dep.id}`, level:'critical', category:'Country Risk', message:`Country risk score ${dep.country_risk_score} — elevated geopolitical exposure`, mineral:dep.primary_mineral, country:dep.country });
+        out.push({ id:`risk-${dep.id}`, depositId:dep.id, level:'critical', category:'Country Risk',       message:`Country risk score ${dep.country_risk_score} — elevated geopolitical exposure`, mineral:dep.primary_mineral, country:dep.country });
       if (dep.data_confidence === 'low')
-        out.push({ id:`conf-${dep.id}`, level:'warning', category:'Low Confidence', message:`Data confidence LOW — independent verification required`, mineral:dep.primary_mineral, country:dep.country });
+        out.push({ id:`conf-${dep.id}`, depositId:dep.id, level:'warning',  category:'Low Confidence',     message:'Data confidence LOW — independent verification required',                       mineral:dep.primary_mineral, country:dep.country });
       if (dep.infrastructure_score > 60 && dep.status !== 'producing')
-        out.push({ id:`infra-${dep.id}`, level:'info', category:'Infrastructure Ready', message:`Infrastructure score ${dep.infrastructure_score} — development-ready conditions`, mineral:dep.primary_mineral, country:dep.country });
+        out.push({ id:`infra-${dep.id}`, depositId:dep.id, level:'info',    category:'Infrastructure Ready', message:`Infrastructure score ${dep.infrastructure_score} — development-ready conditions`, mineral:dep.primary_mineral, country:dep.country });
     });
-    // Sort: critical first, then warning, then info
     const order = { critical:0, warning:1, info:2 };
     return out.sort((a, b) => order[a.level] - order[b.level]);
   }, []);
@@ -367,10 +404,62 @@ export default function AppShell() {
             </div>
           </div>
 
-          {/* Static utility icons */}
-          {(['⚡','?'] as const).map((ic, i) => (
-            <div key={i} style={{ width:34, height:34, borderRadius:8, background:'#0f1623', border:'1px solid rgba(255,255,255,0.07)', display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color:'#94a3b8' }}>{ic}</div>
-          ))}
+          {/* System Pulse ⚡ */}
+          <div ref={sysPulseRef} style={{ position:'relative' }}>
+            <div
+              onClick={() => { setSysPulseOpen(v => !v); setHelpOpen(false); }}
+              style={{ width:34, height:34, borderRadius:8, background: sysPulseOpen ? 'rgba(37,245,166,0.1)' : '#0f1623', border:`1px solid ${sysPulseOpen ? 'rgba(37,245,166,0.35)' : 'rgba(255,255,255,0.07)'}`, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color: sysPulseOpen ? '#25f5a6' : '#94a3b8', transition:'all .15s' }}
+            >⚡</div>
+            {sysPulseOpen && (
+              <div style={{ position:'absolute', top:42, right:0, width:260, background:'#0b0f17', border:'1px solid rgba(37,245,166,0.2)', borderRadius:10, boxShadow:'0 8px 32px rgba(0,0,0,0.7)', zIndex:99998, overflow:'hidden' }}>
+                <div style={{ padding:'10px 14px 8px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize:9, color:'#25f5a6', letterSpacing:'1.5px', fontWeight:700 }}>SYSTEM PULSE</div>
+                </div>
+                {([
+                  ['Active Deposits',  String(filtered.length)],
+                  ['Total Deposits',   String(allKpis.total_deposits)],
+                  ['Alert Count',      String(alerts.length)],
+                  ['Watchlist Items',  String(watchlistIds.length)],
+                  ['Data Mode',        'Local Dataset'],
+                  ['System Status',    'Operational'],
+                ] as [string,string][]).map(([k,v]) => (
+                  <div key={k} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'7px 14px', borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
+                    <span style={{ fontSize:11, color:'#475569' }}>{k}</span>
+                    <span style={{ fontSize:11, color: k==='System Status' ? '#25f5a6' : '#94a3b8', fontWeight: k==='System Status' ? 700 : 400 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Help ? */}
+          <div ref={helpRef} style={{ position:'relative' }}>
+            <div
+              onClick={() => { setHelpOpen(v => !v); setSysPulseOpen(false); }}
+              style={{ width:34, height:34, borderRadius:8, background: helpOpen ? 'rgba(0,234,255,0.1)' : '#0f1623', border:`1px solid ${helpOpen ? 'rgba(0,234,255,0.35)' : 'rgba(255,255,255,0.07)'}`, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, color: helpOpen ? '#00eaff' : '#94a3b8', transition:'all .15s' }}
+            >?</div>
+            {helpOpen && (
+              <div style={{ position:'absolute', top:42, right:0, width:300, background:'#0b0f17', border:'1px solid rgba(0,234,255,0.2)', borderRadius:10, boxShadow:'0 8px 32px rgba(0,0,0,0.7)', zIndex:99998, overflow:'hidden' }}>
+                <div style={{ padding:'10px 14px 8px', borderBottom:'1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.5px', fontWeight:700 }}>HELP</div>
+                </div>
+                {([
+                  ['Click a map marker',   'Selects the deposit and loads its intelligence in the right panel.'],
+                  ['Filter chips',         'Filter visible markers by mineral type. Click again to clear.'],
+                  ['Africa button',        'Focuses the map on African deposits and filters the marker set.'],
+                  ['Timeline slider',      'Drag left to travel back in time — markers appear progressively based on last updated year.'],
+                  ['Watchlist ★',          'Star any deposit in the right panel to save it. Persists across page reloads.'],
+                  ['Alert bell 🔔',        'Shows auto-generated alerts from deposit scores. Click an alert to fly to that deposit.'],
+                  ['View Intelligence',    'Opens the full Intelligence Report modal for the selected deposit.'],
+                ] as [string,string][]).map(([title, body]) => (
+                  <div key={title} style={{ padding:'8px 14px', borderBottom:'1px solid rgba(255,255,255,0.04)' }}>
+                    <div style={{ fontSize:11, color:'#94a3b8', fontWeight:600, marginBottom:2 }}>{title}</div>
+                    <div style={{ fontSize:10, color:'#475569', lineHeight:1.5 }}>{body}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div style={{ width:34, height:34, borderRadius:'50%', background:'linear-gradient(135deg,#00ffd5,#0088aa)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:700, color:'#05070b', cursor:'pointer', marginLeft:4 }}>SA</div>
         </div>
       </div>
@@ -560,39 +649,111 @@ export default function AppShell() {
           </div>
         </div>
 
-        {/* ── MAP ── */}
-        <div style={{ flex:1, position:'relative', minWidth:0 }}>
-          <StratMap
-            deposits={filtered}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onMapReady={(flyTo) => { mapFlyToRef.current = flyTo; }}
-          />
+        {/* ── CENTER CONTENT (switches by activePage) ── */}
+        <div style={{ flex:1, position:'relative', minWidth:0, display:'flex', flexDirection:'column' }}>
 
-          {/* Mineral type legend on map */}
-          <div style={{ position:'absolute', bottom:16, left:16, background:'rgba(11,15,23,0.9)', border:'1px solid rgba(0,255,213,0.15)', padding:'12px 14px', borderRadius:10, zIndex:500, backdropFilter:'blur(4px)' }}>
-            <div style={{ fontSize:9, color:'#475569', letterSpacing:'1.2px', marginBottom:8, fontWeight:600 }}>MINERAL TYPE</div>
-            {MINERALS.map(m => (
-              <div key={m} style={{ display:'flex', alignItems:'center', gap:7, marginBottom:5, fontSize:11, color:'#94a3b8', cursor:'pointer' }} onClick={() => setActiveMineral(activeMineral===m?null:m)}>
-                <div style={{ width:8, height:8, borderRadius:'50%', background:MINERAL_COLORS[m], boxShadow:`0 0 5px ${MINERAL_COLORS[m]}80`, flexShrink:0 }}/>
-                {m}
+          {/* ── GLOBAL MAP (default + mineral filter pages) ── */}
+          {(activePage === 'map' || activePage === 'africa' ||
+            ['lithium','copper','cobalt','nickel','rare-earths','uranium','graphite','manganese'].includes(activePage)) && (
+            <div style={{ flex:1, position:'relative' }}>
+              <StratMap
+                deposits={filtered}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                onMapReady={(flyTo) => { mapFlyToRef.current = flyTo; }}
+              />
+              {/* Mineral type legend */}
+              <div style={{ position:'absolute', bottom:16, left:16, background:'rgba(11,15,23,0.9)', border:'1px solid rgba(0,255,213,0.15)', padding:'12px 14px', borderRadius:10, zIndex:500, backdropFilter:'blur(4px)' }}>
+                <div style={{ fontSize:9, color:'#475569', letterSpacing:'1.2px', marginBottom:8, fontWeight:600 }}>MINERAL TYPE</div>
+                {MINERALS.map(m => (
+                  <div key={m} style={{ display:'flex', alignItems:'center', gap:7, marginBottom:5, fontSize:11, color:'#94a3b8', cursor:'pointer' }} onClick={() => setActiveMineral(activeMineral===m?null:m)}>
+                    <div style={{ width:8, height:8, borderRadius:'50%', background:MINERAL_COLORS[m], boxShadow:`0 0 5px ${MINERAL_COLORS[m]}80`, flexShrink:0 }}/>
+                    {m}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+              {/* Map toolbar top-left */}
+              <div style={{ position:'absolute', top:12, left:12, display:'flex', flexDirection:'column', gap:4, zIndex:500 }}>
+                {['⛶','⧉'].map((ic,i) => (
+                  <div key={i} style={{ width:32, height:32, background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.15)', borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#00ffd5', fontSize:14, backdropFilter:'blur(4px)' }}>{ic}</div>
+                ))}
+              </div>
+              {/* 2D/target controls top-right */}
+              <div style={{ position:'absolute', top:12, right:12, display:'flex', gap:4, zIndex:500 }}>
+                <div style={{ padding:'6px 12px', background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.25)', borderRadius:7, color:'#00ffd5', fontSize:11, fontWeight:600, cursor:'pointer', backdropFilter:'blur(4px)' }}>2D</div>
+                <div style={{ width:32, height:32, background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.15)', borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#00ffd5', fontSize:14, backdropFilter:'blur(4px)' }}>⊕</div>
+              </div>
+            </div>
+          )}
 
-          {/* Map toolbar top-left */}
-          <div style={{ position:'absolute', top:12, left:12, display:'flex', flexDirection:'column', gap:4, zIndex:500 }}>
-            {['⛶','⧉'].map((ic,i) => (
-              <div key={i} style={{ width:32, height:32, background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.15)', borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#00ffd5', fontSize:14, backdropFilter:'blur(4px)' }}>{ic}</div>
-            ))}
-          </div>
+          {/* ── DASHBOARD ── */}
+          {activePage === 'dashboard' && (
+            <div style={{ flex:1, overflowY:'auto', padding:24, background:'#05070b' }}>
+              <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.6px', fontWeight:700, marginBottom:20 }}>DASHBOARD OVERVIEW</div>
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:24 }}>
+                {([
+                  ['DEPOSITS TRACKED',  allKpis.total_deposits,   '#00eaff', 'in database'],
+                  ['AFRICAN DEPOSITS',  allKpis.african_deposits, '#22d3ee', 'across Africa'],
+                  ['COUNTRIES COVERED', allKpis.countries_covered,'#e2e8f0', 'globally'],
+                  ['CRITICAL MINERALS', allKpis.minerals_covered, '#a855f7', 'mineral types'],
+                  ['ACTIVE ALERTS',     alerts.length,            '#ef4444', 'auto-generated'],
+                  ['WATCHLIST',         watchlistIds.length,      '#fbbf24', 'deposits saved'],
+                ] as [string,number,string,string][]).map(([label, val, color, sub]) => (
+                  <div key={label} style={{ background:'rgba(0,234,255,0.03)', border:'1px solid rgba(0,234,255,0.1)', borderRadius:12, padding:'16px 18px' }}>
+                    <div style={{ fontSize:9, color:'#334155', letterSpacing:'1.3px', fontWeight:600, marginBottom:8 }}>{label}</div>
+                    <div style={{ fontSize:34, fontWeight:700, color, lineHeight:1, letterSpacing:-1.5, textShadow:`0 0 20px ${color}40` }}>{val}</div>
+                    <div style={{ fontSize:10, color:'#334155', marginTop:4 }}>{sub}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.4px', fontWeight:700, marginBottom:12 }}>TOP OPPORTUNITY DEPOSITS</div>
+              <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                {[...DEPOSITS].sort((a,b) => b.opportunity_score - a.opportunity_score).slice(0,8).map(dep => {
+                  const dc = MINERAL_COLORS[dep.primary_mineral] || '#94a3b8';
+                  return (
+                    <div key={dep.id}
+                      onClick={() => { setSelectedId(dep.id); setSelectedDep(dep); setActivePage('map'); if (mapFlyToRef.current) mapFlyToRef.current(dep.latitude, dep.longitude, 6); }}
+                      style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.05)', borderRadius:8, cursor:'pointer', transition:'background .1s' }}
+                      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.05)'; }}
+                      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.02)'; }}>
+                      <div style={{ width:8, height:8, borderRadius:'50%', background:dc, boxShadow:`0 0 6px ${dc}80`, flexShrink:0 }}/>
+                      <span style={{ flex:1, fontSize:12, color:'#e2e8f0', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{dep.name}</span>
+                      <span style={{ fontSize:10, color:'#475569' }}>{dep.country}</span>
+                      <span style={{ padding:'2px 8px', background:`${dc}14`, border:`1px solid ${dc}30`, borderRadius:10, fontSize:10, color:dc, fontWeight:600 }}>{dep.primary_mineral}</span>
+                      <span style={{ fontSize:14, fontWeight:700, color:'#25f5a6', minWidth:32, textAlign:'right' }}>{dep.opportunity_score}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
-          {/* 2D/target controls top-right */}
-          <div style={{ position:'absolute', top:12, right:12, display:'flex', gap:4, zIndex:500 }}>
-            <div style={{ padding:'6px 12px', background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.25)', borderRadius:7, color:'#00ffd5', fontSize:11, fontWeight:600, cursor:'pointer', backdropFilter:'blur(4px)' }}>2D</div>
-            <div style={{ width:32, height:32, background:'rgba(14,22,33,0.9)', border:'1px solid rgba(0,255,213,0.15)', borderRadius:7, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', color:'#00ffd5', fontSize:14, backdropFilter:'blur(4px)' }}>⊕</div>
-          </div>
-        </div>
+          {/* ── PLACEHOLDER PAGES ── */}
+          {(['rankings','prices','risk','pipeline','ai','sources'].includes(activePage)) && (() => {
+            const PI: Record<string,{title:string;icon:string;desc:string}> = {
+              rankings: { title:'Rankings',           icon:'↑↓', desc:'Ranked deposit tables by opportunity score, confidence, and supply chain criticality across all tracked minerals.' },
+              prices:   { title:'Price Signals',      icon:'〜', desc:'Real-time and historical mineral price feeds integrated with deposit-level production data for market intelligence.' },
+              risk:     { title:'Supply Risk Index',  icon:'⚠',  desc:'Aggregated country risk, concentration risk, and infrastructure gap scores mapped to global supply chain exposure.' },
+              pipeline: { title:'Discovery Pipeline', icon:'⬡', desc:'Exploration-stage deposits tracked from early drilling through resource estimation and feasibility decision gates.' },
+              ai:       { title:'AI Research',        icon:'◈', desc:'AI-assisted synthesis of geological reports, company filings, and academic literature for each deposit.' },
+              sources:  { title:'Sources',            icon:'☰', desc:'Primary source registry: USGS, BGS, company NI 43-101/JORC filings, government geological surveys, and academic citations.' },
+            };
+            const info = PI[activePage] ?? { title: activePage, icon:'◎', desc:'This section is under development.' };
+            return (
+              <div style={{ flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:40, background:'#05070b' }}>
+                <div style={{ fontSize:44, marginBottom:16, opacity:.18 }}>{info.icon}</div>
+                <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.6px', fontWeight:700, marginBottom:8 }}>COMING SOON</div>
+                <div style={{ fontSize:22, fontWeight:700, color:'#e2e8f0', marginBottom:14, letterSpacing:-.3 }}>{info.title}</div>
+                <div style={{ fontSize:13, color:'#475569', lineHeight:1.7, maxWidth:460, textAlign:'center' }}>{info.desc}</div>
+                <button onClick={() => setActivePage('map')}
+                  style={{ marginTop:28, padding:'9px 22px', borderRadius:8, background:'rgba(0,234,255,0.08)', border:'1px solid rgba(0,234,255,0.25)', color:'#00eaff', fontSize:12, cursor:'pointer', fontFamily:'Inter,sans-serif' }}>
+                  ← Back to Map
+                </button>
+              </div>
+            );
+          })()}
+
+        </div>{/* end center content */}
 
         {/* ── RIGHT INTELLIGENCE PANEL ── */}
         <div style={{ width:360, flexShrink:0, background:'#071018', borderLeft:'1px solid rgba(0,255,213,0.18)', display:'flex', flexDirection:'column', overflowY:'auto' }}>
@@ -687,6 +848,14 @@ export default function AppShell() {
               {/* View Full Report */}
               <div style={{ padding:'0 16px 10px' }}>
                 <button
+                  onClick={() => {
+                    // Ensure selectedDep is resolved before opening — guard against stale state
+                    if (!selectedDep && selectedId) {
+                      const dep = DEPOSITS.find(d => d.id === selectedId);
+                      if (dep) setSelectedDep(dep);
+                    }
+                    setModalOpen(true);
+                  }}
                   style={{ width:'100%', padding:'11px', background:'transparent', border:`1px solid ${mc}55`, color:mc, fontSize:12, fontWeight:500, borderRadius:10, cursor:'pointer', fontFamily:'Inter,sans-serif', letterSpacing:.4, transition:'all .2s' }}
                   onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background=`${mc}15`;(e.currentTarget as HTMLElement).style.boxShadow=`0 0 12px ${mc}25`;}}
                   onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='transparent';(e.currentTarget as HTMLElement).style.boxShadow='none';}}>
@@ -722,7 +891,14 @@ export default function AppShell() {
               {/* View Intelligence */}
               <div style={{ padding:'0 16px 12px' }}>
                 <button
-                  onClick={() => setModalOpen(true)}
+                  onClick={() => {
+                    // If selectedDep is stale or null, resolve from selectedId first
+                    if (!selectedDep && selectedId) {
+                      const dep = DEPOSITS.find(d => d.id === selectedId);
+                      if (dep) setSelectedDep(dep);
+                    }
+                    setModalOpen(true);
+                  }}
                   style={{ width:'100%', padding:'11px', background:'rgba(0,234,255,0.08)', border:'1px solid rgba(0,234,255,0.28)', color:'#00eaff', fontSize:12, fontWeight:500, borderRadius:10, cursor:'pointer', fontFamily:'Inter,sans-serif', letterSpacing:.4 }}
                   onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,234,255,0.14)';}}
                   onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,234,255,0.08)';}}>
@@ -865,9 +1041,13 @@ export default function AppShell() {
           </div>
 
           {/* Deposit count badge */}
-          <div style={{ flexShrink:0, textAlign:'right', minWidth:64 }}>
-            <div style={{ fontSize:17, fontWeight:700, color:'#e2e8f0', lineHeight:1 }}>{filtered.length}</div>
-            <div style={{ fontSize:9, color:'#334155', letterSpacing:.5, marginTop:2 }}>VISIBLE</div>
+          <div style={{ flexShrink:0, textAlign:'right', minWidth:80 }}>
+            <div style={{ fontSize:17, fontWeight:700, color: filtered.length === 0 ? '#334155' : '#e2e8f0', lineHeight:1 }}>
+              {filtered.length}
+            </div>
+            <div style={{ fontSize:9, color:'#334155', letterSpacing:.5, marginTop:2 }}>
+              {filtered.length === 0 ? 'NO DATA' : 'VISIBLE'}
+            </div>
           </div>
 
           {/* Reset to present */}
@@ -1007,6 +1187,7 @@ export default function AppShell() {
 
         return (
           <div
+            ref={alertDropdownRef}
             onClick={e => e.stopPropagation()}
             style={{ position:'fixed', top:bellRect.top, right:bellRect.right, width:390, maxHeight:520, background:'#0b0f17', border:'1px solid rgba(0,234,255,0.18)', borderRadius:12, boxShadow:'0 8px 40px rgba(0,0,0,0.7), 0 0 24px rgba(0,234,255,0.05)', zIndex:99999, display:'flex', flexDirection:'column', overflow:'hidden' }}
           >
@@ -1072,13 +1253,15 @@ export default function AppShell() {
                   <div
                     key={alert.id}
                     onClick={() => {
-                      const dep = DEPOSITS.find(d => d.primary_mineral === alert.mineral && d.country === alert.country);
-                      if (dep) {
-                        setSelectedId(dep.id);
-                        if (mapFlyToRef.current) mapFlyToRef.current(dep.latitude, dep.longitude, 5);
-                        setAlertsOpen(false);
-                        setAlertFilter('all');
-                      }
+                      // Look up by depositId first (exact), fall back to mineral+country
+                      const dep = DEPOSITS.find(d => d.id === alert.depositId)
+                               ?? DEPOSITS.find(d => d.primary_mineral === alert.mineral && d.country === alert.country);
+                      if (!dep) { console.warn('[Alerts] deposit not found for', alert.id); return; }
+                      setSelectedId(dep.id);
+                      setSelectedDep(dep);
+                      if (mapFlyToRef.current) mapFlyToRef.current(dep.latitude, dep.longitude, 8);
+                      setAlertsOpen(false);
+                      setAlertFilter('all');
                     }}
                     style={{ padding:'9px 16px', borderBottom:'1px solid rgba(255,255,255,0.04)', cursor:'pointer', transition:'background .1s', display:'flex', gap:10, alignItems:'flex-start' }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.03)'; }}
