@@ -253,6 +253,15 @@ export default function AppShell() {
   }, []);
 
   const mc = selectedDep ? (MINERAL_COLORS[selectedDep.primary_mineral] || '#00eaff') : '#00eaff';
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // Close modal on Escape key
+  useEffect(() => {
+    if (!modalOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setModalOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [modalOpen]);
 
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', width:'100vw', background:'#05070b', overflow:'hidden', fontFamily:'Inter,sans-serif' }}>
@@ -649,7 +658,9 @@ export default function AppShell() {
 
               {/* View Intelligence */}
               <div style={{ padding:'0 16px 12px' }}>
-                <button style={{ width:'100%', padding:'11px', background:'rgba(0,234,255,0.08)', border:'1px solid rgba(0,234,255,0.28)', color:'#00eaff', fontSize:12, fontWeight:500, borderRadius:10, cursor:'pointer', fontFamily:'Inter,sans-serif', letterSpacing:.4 }}
+                <button
+                  onClick={() => setModalOpen(true)}
+                  style={{ width:'100%', padding:'11px', background:'rgba(0,234,255,0.08)', border:'1px solid rgba(0,234,255,0.28)', color:'#00eaff', fontSize:12, fontWeight:500, borderRadius:10, cursor:'pointer', fontFamily:'Inter,sans-serif', letterSpacing:.4 }}
                   onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,234,255,0.14)';}}
                   onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.background='rgba(0,234,255,0.08)';}}>
                   View Intelligence
@@ -924,6 +935,289 @@ export default function AppShell() {
         ))}
         </div>
       </div>
+
+      {/* ══════════ INTELLIGENCE MODAL ══════════ */}
+      {modalOpen && selectedDep && (() => {
+        const dep     = selectedDep;
+        const color   = MINERAL_COLORS[dep.primary_mineral] || '#00eaff';
+        const paleo   = getPaleoContext(dep);
+        const watched = watchlistIds.includes(dep.id);
+
+        const riskLevel = dep.difficulty_score >= 75 ? 'HIGH' : dep.difficulty_score >= 50 ? 'MEDIUM' : 'LOW';
+        const riskColor = dep.difficulty_score >= 75 ? '#ef4444' : dep.difficulty_score >= 50 ? '#f6b93b' : '#25f5a6';
+        const oppLevel  = dep.opportunity_score >= 80 ? 'EXCEPTIONAL' : dep.opportunity_score >= 65 ? 'STRONG' : 'MODERATE';
+        const confColor = dep.data_confidence === 'high' ? '#25f5a6' : dep.data_confidence === 'medium' ? '#f6b93b' : '#94a3b8';
+
+        const supplyNotes: Record<string, string> = {
+          Lithium:      'Critical for lithium-ion battery cathodes and electrolytes. Demand driven by EV and grid storage growth.',
+          Copper:       'Essential for electrification, EV motors, grid infrastructure, and renewables. No viable substitute at scale.',
+          Cobalt:       'Key cathode material in NMC and NCA chemistries. Supply concentrated in DRC — geopolitical risk is elevated.',
+          Nickel:       'Critical for high-energy-density NMC cathodes and stainless steel. Class 1 supply is the strategic bottleneck.',
+          'Rare Earths': 'NdPr permanent magnets are irreplaceable in EV traction motors and wind turbines. China controls ~85% of processing.',
+          Uranium:      'Fuel for nuclear power. Demand rising as net-zero targets and SMR programmes expand globally.',
+          Graphite:     'Dominant anode material in Li-ion batteries. ~90% of battery-grade spherical graphite processed in China.',
+          Manganese:    'Emerging cathode material in LMFP batteries. Also essential for steel. Supply relatively diversified.',
+          Tantalum:     'Critical for capacitors in electronics and aerospace. Supply concentrated in DRC and Rwanda — conflict mineral risk.',
+        };
+
+        const ScoreBar = ({ label, value, color: c }: { label: string; value: number; color: string }) => (
+          <div style={{ marginBottom:8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', marginBottom:3 }}>
+              <span style={{ fontSize:11, color:'#64748b' }}>{label}</span>
+              <span style={{ fontSize:11, color:c, fontWeight:600 }}>{value}</span>
+            </div>
+            <div style={{ height:3, background:'rgba(255,255,255,0.06)', borderRadius:2, overflow:'hidden' }}>
+              <div style={{ width:`${value}%`, height:'100%', background:c, borderRadius:2, boxShadow:`0 0 6px ${c}80` }}/>
+            </div>
+          </div>
+        );
+
+        return (
+          <div
+            onClick={() => setModalOpen(false)}
+            style={{ position:'fixed', inset:0, zIndex:2000, background:'rgba(2,7,13,0.82)', backdropFilter:'blur(6px)', display:'flex', alignItems:'center', justifyContent:'center', padding:24 }}
+          >
+            <div
+              onClick={e => e.stopPropagation()}
+              style={{ width:'100%', maxWidth:760, maxHeight:'88vh', background:'#071018', border:'1px solid rgba(0,234,255,0.22)', borderRadius:16, display:'flex', flexDirection:'column', boxShadow:'0 0 60px rgba(0,234,255,0.08), 0 24px 80px rgba(0,0,0,0.8)', overflow:'hidden' }}
+            >
+              {/* Header */}
+              <div style={{ padding:'18px 24px 16px', borderBottom:'1px solid rgba(0,234,255,0.1)', display:'flex', alignItems:'flex-start', gap:14, flexShrink:0 }}>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.6px', fontWeight:600, marginBottom:4, opacity:.7 }}>INTELLIGENCE REPORT</div>
+                  <div style={{ fontSize:20, fontWeight:700, color:'#fff', letterSpacing:-.3, lineHeight:1.2, marginBottom:6 }}>{dep.name}</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                    <span style={{ padding:'3px 10px', background:`${color}18`, border:`1px solid ${color}50`, borderRadius:20, fontSize:11, fontWeight:600, color }}>{dep.primary_mineral}</span>
+                    {dep.secondary_minerals.filter(Boolean).map(s => (
+                      <span key={s} style={{ padding:'2px 8px', background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.1)', borderRadius:20, fontSize:10, color:'#64748b' }}>{s}</span>
+                    ))}
+                    <span style={{ fontSize:11, color:'#475569' }}>· {dep.country}{dep.region ? `, ${dep.region}` : ''}</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setModalOpen(false)}
+                  style={{ width:32, height:32, borderRadius:8, background:'rgba(255,255,255,0.04)', border:'1px solid rgba(255,255,255,0.08)', color:'#475569', fontSize:18, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, fontFamily:'Inter,sans-serif', transition:'all .15s' }}
+                  onMouseEnter={e=>{(e.currentTarget as HTMLElement).style.color='#fff';(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.08)';}}
+                  onMouseLeave={e=>{(e.currentTarget as HTMLElement).style.color='#475569';(e.currentTarget as HTMLElement).style.background='rgba(255,255,255,0.04)';}}
+                >✕</button>
+              </div>
+
+              {/* Scrollable body */}
+              <div style={{ overflowY:'auto', padding:'20px 24px 28px', flex:1 }}>
+
+                {/* 1+2: Executive Summary + Strategic Importance */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14 }}>
+                  <div style={{ background:'rgba(0,234,255,0.03)', border:'1px solid rgba(0,234,255,0.1)', borderRadius:10, padding:'14px 16px' }}>
+                    <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.6px', fontWeight:700, marginBottom:8, opacity:.7 }}>EXECUTIVE SUMMARY</div>
+                    <p style={{ fontSize:12, color:'#94a3b8', lineHeight:1.7, margin:0 }}>
+                      {dep.ai_summary || `${dep.name} is a ${dep.primary_mineral.toLowerCase()} deposit in ${dep.country}. Further intelligence assessment is pending.`}
+                    </p>
+                  </div>
+                  <div style={{ background:'rgba(0,234,255,0.03)', border:'1px solid rgba(0,234,255,0.1)', borderRadius:10, padding:'14px 16px' }}>
+                    <div style={{ fontSize:9, color:'#00eaff', letterSpacing:'1.6px', fontWeight:700, marginBottom:8, opacity:.7 }}>STRATEGIC IMPORTANCE</div>
+                    <div style={{ display:'flex', gap:7, marginBottom:10, flexWrap:'wrap' }}>
+                      <span style={{ padding:'4px 10px', background:`${color}12`, border:`1px solid ${color}35`, borderRadius:8, fontSize:11, color }}>Opportunity: <strong>{oppLevel}</strong></span>
+                      <span style={{ padding:'4px 10px', background:`${riskColor}12`, border:`1px solid ${riskColor}35`, borderRadius:8, fontSize:11, color:riskColor }}>Risk: <strong>{riskLevel}</strong></span>
+                    </div>
+                    <p style={{ fontSize:12, color:'#94a3b8', lineHeight:1.7, margin:0 }}>
+                      {supplyNotes[dep.primary_mineral] || `${dep.primary_mineral} is a critical mineral with significant strategic importance to global clean energy and technology supply chains.`}
+                    </p>
+                  </div>
+                </div>
+
+                {/* 3: Paleo / Geologic Context */}
+                <div style={{ background:'rgba(168,85,247,0.04)', border:'1px solid rgba(168,85,247,0.18)', borderRadius:10, padding:'14px 16px', marginBottom:14 }}>
+                  <div style={{ fontSize:9, color:'#a855f7', letterSpacing:'1.6px', fontWeight:700, marginBottom:6, opacity:.8 }}>PALEO / GEOLOGIC CONTEXT</div>
+                  <div style={{ fontSize:13, color:'#c4b5fd', fontWeight:500, marginBottom:6 }}>{paleo.label}</div>
+                  <p style={{ fontSize:12, color:'#64748b', lineHeight:1.65, margin:0 }}>{paleo.note}</p>
+                  {dep.paleo_setting && (
+                    <div style={{ marginTop:10, paddingTop:10, borderTop:'1px solid rgba(168,85,247,0.12)', fontSize:11, color:'#7c3aed', opacity:.8, fontStyle:'italic' }}>{dep.paleo_setting}</div>
+                  )}
+                </div>
+
+                {/* 4: Development Risk */}
+                <div style={{ background:'rgba(246,185,59,0.03)', border:'1px solid rgba(246,185,59,0.14)', borderRadius:10, padding:'14px 16px', marginBottom:14 }}>
+                  <div style={{ fontSize:9, color:'#f6b93b', letterSpacing:'1.6px', fontWeight:700, marginBottom:12, opacity:.8 }}>DEVELOPMENT RISK</div>
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px' }}>
+                    <div>
+                      <ScoreBar label="Difficulty Score"   value={dep.difficulty_score}           color="#f6b93b" />
+                      <ScoreBar label="Country Risk"       value={dep.country_risk_score}         color="#ef4444" />
+                      <ScoreBar label="Infrastructure Gap" value={100 - dep.infrastructure_score} color="#f97316" />
+                    </div>
+                    <div>
+                      <ScoreBar label="Environmental Risk" value={dep.environmental_risk_score}   color="#a855f7" />
+                      <ScoreBar label="Underutilization"   value={dep.underutilization_score}     color="#22d3ee" />
+                      <ScoreBar label="Opportunity Score"  value={dep.opportunity_score}          color="#25f5a6" />
+                    </div>
+                  </div>
+                  <div style={{ marginTop:10, padding:'8px 10px', background:'rgba(246,185,59,0.06)', borderRadius:7, fontSize:11, color:'#94a3b8', lineHeight:1.5 }}>
+                    Overall risk classification: <span style={{ color:riskColor, fontWeight:600 }}>{riskLevel}</span>
+                    {dep.status === 'construction' && ' · Under active construction — execution risk present.'}
+                    {dep.status === 'exploration'  && ' · Early-stage — technical risk remains elevated.'}
+                    {dep.status === 'producing'    && ' · Operating mine — execution risk largely de-risked.'}
+                    {dep.status === 'feasibility'  && ' · Feasibility stage — pre-decision, financing risk active.'}
+                  </div>
+                </div>
+
+                {/* 5: Supply Chain Relevance */}
+                <div style={{ background:'rgba(37,245,166,0.03)', border:'1px solid rgba(37,245,166,0.14)', borderRadius:10, padding:'14px 16px', marginBottom:14 }}>
+                  <div style={{ fontSize:9, color:'#25f5a6', letterSpacing:'1.6px', fontWeight:700, marginBottom:10, opacity:.8 }}>SUPPLY CHAIN RELEVANCE</div>
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:5, marginBottom:12 }}>
+                    {dep.flags.filter(Boolean).map(f => (
+                      <span key={f} style={{ padding:'3px 9px', background:'rgba(37,245,166,0.08)', border:'1px solid rgba(37,245,166,0.2)', borderRadius:20, fontSize:10, color:'#25f5a6', letterSpacing:.3 }}>{f.replace(/_/g,' ')}</span>
+                    ))}
+                    {dep.flags.length === 0 && <span style={{ fontSize:11, color:'#334155' }}>No supply chain flags recorded.</span>}
+                  </div>
+                  <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:8 }}>
+                    {([
+                      ['Status',    dep.status.replace(/_/g,' ')],
+                      ['Resource',  dep.resource_size_tonnes ? (dep.resource_size_tonnes >= 1e9 ? `${(dep.resource_size_tonnes/1e9).toFixed(1)} Bt` : `${(dep.resource_size_tonnes/1e6).toFixed(0)} Mt`) : '—'],
+                      ['Grade',     dep.grade_percent ? `${dep.grade_percent} ${dep.grade_unit}` : '—'],
+                      ['Owner',     dep.owner    || '—'],
+                      ['Operator',  dep.operator || '—'],
+                      ['Stage',     dep.development_stage || '—'],
+                    ] as [string,string][]).map(([lbl, val]) => (
+                      <div key={lbl} style={{ background:'rgba(0,0,0,0.2)', borderRadius:7, padding:'8px 10px' }}>
+                        <div style={{ fontSize:9, color:'#334155', letterSpacing:.5, marginBottom:3 }}>{lbl.toUpperCase()}</div>
+                        <div style={{ fontSize:11, color:'#94a3b8', lineHeight:1.4, wordBreak:'break-word' }}>{val}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 6: Confidence Assessment */}
+                <div style={{ background:'rgba(255,255,255,0.02)', border:'1px solid rgba(255,255,255,0.06)', borderRadius:10, padding:'14px 16px', marginBottom:14 }}>
+                  <div style={{ fontSize:9, color:'#64748b', letterSpacing:'1.6px', fontWeight:700, marginBottom:8, opacity:.8 }}>CONFIDENCE ASSESSMENT</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
+                    <span style={{ padding:'5px 14px', background:`${confColor}14`, border:`1px solid ${confColor}45`, borderRadius:8, fontSize:13, fontWeight:700, color:confColor, letterSpacing:.5 }}>{dep.data_confidence.toUpperCase()}</span>
+                    <span style={{ fontSize:12, color:'#64748b' }}>{dep.source_count} source{dep.source_count !== 1 ? 's' : ''} · Last updated {dep.last_updated_year}</span>
+                  </div>
+                  <p style={{ fontSize:12, color:'#475569', lineHeight:1.65, margin:0 }}>
+                    {dep.data_confidence === 'high'   && 'Multiple independent primary sources confirm key resource parameters. NI 43-101 or JORC-compliant resource estimates available. Suitable for comparative analysis.'}
+                    {dep.data_confidence === 'medium' && 'Data drawn from company announcements, government surveys, and secondary literature. Core parameters are plausible but require verification against primary filings before investment-grade use.'}
+                    {dep.data_confidence === 'low'    && 'Limited public data. Estimates are indicative only, based on historical reports or analogous deposits. Independent verification required. Treat all resource figures as preliminary.'}
+                  </p>
+                </div>
+
+                {/* 8: Sources */}
+                {(() => {
+                  // Mock source records derived deterministically from deposit fields.
+                  // Scaled to dep.source_count so the count shown in section 6 matches.
+                  type SourceConf = 'High' | 'Medium' | 'Low';
+                  interface MockSource { name: string; type: string; year: number; confidence: SourceConf; }
+
+                  const confMap: Record<string, SourceConf> = { high:'High', medium:'Medium', low:'Low' };
+                  const depConf: SourceConf = confMap[dep.data_confidence] ?? 'Low';
+
+                  // Base pool — ordered by authority. Sliced to dep.source_count.
+                  const pool: MockSource[] = [
+                    { name:'USGS Mineral Resources Program',       type:'Government',  year: dep.last_updated_year,      confidence:'High'   },
+                    { name:'Company Technical Report (NI 43-101)', type:'Corporate',   year: dep.last_updated_year - 1,  confidence: depConf  },
+                    { name:'BGS World Mineral Statistics',         type:'Government',  year: dep.last_updated_year - 1,  confidence:'High'   },
+                    { name:'Operator Project Disclosure',          type:'Corporate',   year: dep.last_updated_year,      confidence: depConf  },
+                    { name:'Academic Geology Study',               type:'Research',    year: dep.last_updated_year - 2,  confidence:'Medium' },
+                    { name:'National Geological Survey',           type:'Government',  year: dep.last_updated_year - 1,  confidence:'High'   },
+                    { name:'IEA Critical Minerals Report',         type:'Government',  year: 2023,                       confidence:'High'   },
+                    { name:'Company Annual Report',                type:'Corporate',   year: dep.last_updated_year,      confidence: depConf  },
+                    { name:'Peer-Reviewed Journal Article',        type:'Research',    year: dep.last_updated_year - 3,  confidence:'Medium' },
+                    { name:'Stock Exchange Filing',                type:'Regulatory',  year: dep.last_updated_year,      confidence: depConf  },
+                    { name:'Wood Mackenzie Commodity Report',      type:'Analyst',     year: dep.last_updated_year - 1,  confidence:'Medium' },
+                    { name:'S&P Global Market Intelligence',       type:'Analyst',     year: dep.last_updated_year,      confidence:'Medium' },
+                    { name:'Regional Government Mining Registry',  type:'Government',  year: dep.last_updated_year - 2,  confidence:'Medium' },
+                    { name:'Environmental Impact Assessment',      type:'Regulatory',  year: dep.last_updated_year - 1,  confidence:'Medium' },
+                    { name:'Historical Exploration Report',        type:'Research',    year: dep.last_updated_year - 4,  confidence:'Low'    },
+                    { name:'Industry Trade Publication',           type:'Media',       year: dep.last_updated_year - 1,  confidence:'Low'    },
+                    { name:'Benchmark Mineral Intelligence',       type:'Analyst',     year: dep.last_updated_year,      confidence:'Medium' },
+                    { name:'UN Comtrade Trade Statistics',         type:'Government',  year: dep.last_updated_year - 1,  confidence:'High'   },
+                  ];
+
+                  const sources = pool.slice(0, Math.max(1, Math.min(dep.source_count, pool.length)));
+
+                  const typeColor: Record<string, string> = {
+                    Government: '#3f8cff',
+                    Corporate:  '#25f5a6',
+                    Research:   '#a855f7',
+                    Regulatory: '#22d3ee',
+                    Analyst:    '#f6b93b',
+                    Media:      '#94a3b8',
+                  };
+                  const srcConfColor: Record<string, string> = {
+                    High:   '#25f5a6',
+                    Medium: '#f6b93b',
+                    Low:    '#94a3b8',
+                  };
+
+                  return (
+                    <div style={{ background:'rgba(63,140,255,0.03)', border:'1px solid rgba(63,140,255,0.14)', borderRadius:10, padding:'14px 16px', marginBottom:14 }}>
+                      <div style={{ fontSize:9, color:'#3f8cff', letterSpacing:'1.6px', fontWeight:700, marginBottom:12, opacity:.8 }}>SOURCES</div>
+
+                      {/* Column headers */}
+                      <div style={{ display:'grid', gridTemplateColumns:'1fr 100px 52px 58px', gap:'0 10px', padding:'0 10px 6px', borderBottom:'1px solid rgba(255,255,255,0.05)', marginBottom:6 }}>
+                        {['SOURCE', 'TYPE', 'YEAR', 'CONF.'].map(h => (
+                          <div key={h} style={{ fontSize:8, color:'#1e3a4a', letterSpacing:'1.2px', fontWeight:600 }}>{h}</div>
+                        ))}
+                      </div>
+
+                      {/* Source rows */}
+                      {sources.map((src, i) => (
+                        <div
+                          key={i}
+                          style={{
+                            display:'grid', gridTemplateColumns:'1fr 100px 52px 58px', gap:'0 10px',
+                            padding:'7px 10px', borderRadius:7, transition:'background .1s',
+                          }}
+                          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'rgba(63,140,255,0.06)'; }}
+                          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+                        >
+                          <div style={{ fontSize:12, color:'#94a3b8', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={src.name}>
+                            {src.name}
+                          </div>
+                          <div>
+                            <span style={{
+                              fontSize:10, padding:'2px 7px', borderRadius:10, fontWeight:500,
+                              background: `${typeColor[src.type] || '#94a3b8'}14`,
+                              border:     `1px solid ${typeColor[src.type] || '#94a3b8'}35`,
+                              color:       typeColor[src.type] || '#94a3b8',
+                            }}>{src.type}</span>
+                          </div>
+                          <div style={{ fontSize:12, color:'#475569' }}>{src.year}</div>
+                          <div style={{ fontSize:11, fontWeight:600, color: srcConfColor[src.confidence] || '#94a3b8' }}>
+                            {src.confidence}
+                          </div>
+                        </div>
+                      ))}
+
+                      <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid rgba(255,255,255,0.04)', fontSize:10, color:'#1e3a4a', lineHeight:1.5 }}>
+                        {dep.source_count} reference{dep.source_count !== 1 ? 's' : ''} indexed · Mock data for demonstration · Real source verification required before use
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 7: Watchlist Status */}
+                <div style={{ background: watched ? 'rgba(251,191,36,0.05)' : 'rgba(255,255,255,0.02)', border:`1px solid ${watched ? 'rgba(251,191,36,0.25)' : 'rgba(255,255,255,0.06)'}`, borderRadius:10, padding:'14px 16px' }}>
+                  <div style={{ fontSize:9, color: watched ? '#fbbf24' : '#334155', letterSpacing:'1.6px', fontWeight:700, marginBottom:8, opacity:.8 }}>WATCHLIST STATUS</div>
+                  <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                    <span style={{ fontSize:24 }}>{watched ? '★' : '☆'}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:13, fontWeight:600, color: watched ? '#fbbf24' : '#475569', marginBottom:2 }}>{watched ? 'In your Watchlist' : 'Not in Watchlist'}</div>
+                      <div style={{ fontSize:11, color:'#334155' }}>
+                        {watched ? `${dep.name} is tracked. You have ${watchlistIds.length} deposit${watchlistIds.length !== 1 ? 's' : ''} on your watchlist.` : 'Add this deposit to track it across sessions.'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => toggleWatchlist(dep.id)}
+                      style={{ padding:'8px 16px', borderRadius:8, fontSize:12, fontWeight:500, background: watched ? 'rgba(251,191,36,0.12)' : 'rgba(0,234,255,0.08)', border:`1px solid ${watched ? 'rgba(251,191,36,0.4)' : 'rgba(0,234,255,0.28)'}`, color: watched ? '#fbbf24' : '#00eaff', cursor:'pointer', fontFamily:'Inter,sans-serif', transition:'all .15s', flexShrink:0 }}
+                    >{watched ? '★ Remove' : '☆ Add to Watchlist'}</button>
+                  </div>
+                </div>
+
+              </div>{/* end scrollable body */}
+            </div>{/* end modal panel */}
+          </div>/* end backdrop */
+        );
+      })()}
+
     </div>
   );
 }
