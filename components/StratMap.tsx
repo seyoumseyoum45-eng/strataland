@@ -2,7 +2,7 @@
 // StratMap — real Leaflet map, client-only
 // Preserves: stable init, double-init guard, SSR safety
 // Upgrades:  radar pulse markers, cyan country borders, intelligence grid
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { Deposit } from '../types';
 
 interface Props {

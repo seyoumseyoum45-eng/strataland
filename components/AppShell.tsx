@@ -3,13 +3,23 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import dynamic from 'next/dynamic';
 import type { Deposit } from '../types';
 import { DEPOSITS, computeKPIs, isAfrica, getPaleoContext } from '../lib/localData';
-import PaleoExplorer from './PaleoExplorer';
 
 const StratMap = dynamic(() => import('../components/StratMap'), {
   ssr: false,
   loading: () => (
     <div style={{ width:'100%', height:'100%', background:'#05070b', display:'flex', alignItems:'center', justifyContent:'center', color:'rgba(0,255,213,0.4)', fontSize:11, letterSpacing:2 }}>
       LOADING MAP LAYER...
+    </div>
+  ),
+});
+
+// PaleoExplorer is fully isolated — ssr:false so it only runs in the browser.
+// If it throws, Next.js error boundary catches it without crashing the app.
+const PaleoExplorer = dynamic(() => import('../components/PaleoExplorer'), {
+  ssr: false,
+  loading: () => (
+    <div style={{ width:'100%', height:'100%', background:'#060b14', display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <span style={{ fontSize:11, color:'#334155', fontFamily:'Inter,sans-serif' }}>Loading Paleo Explorer…</span>
     </div>
   ),
 });
@@ -662,7 +672,7 @@ export default function AppShell() {
           )}
 
           {/* ── GLOBAL MAP (default + mineral filter pages) ── */}
-          {(activePage === 'map' || activePage === 'africa' ||
+          {(activePage === 'map' || activePage === 'africa' || activePage === 'watchlist' ||
             ['lithium','copper','cobalt','nickel','rare-earths','uranium','graphite','manganese'].includes(activePage)) && (
             <div style={{ flex:1, position:'relative' }}>
               <StratMap
