@@ -3,18 +3,31 @@
   "features": [
     {
       "type": "Feature",
-      "properties": { "name": "Proto-Africa", "type": "continent" },
+      "properties": { "name": "Proto-Africa", "type": "continent", "color": "#22c55e" },
       "geometry": {
         "type": "Polygon",
         "coordinates": [[
-          [-20, 35],
-          [35, 35],
-          [45, 5],
-          [35, -35],
-          [5, -40],
-          [-20, -20],
-          [-30, 10],
-          [-20, 35]
+          [-20, 35],[35, 35],[45, 5],[35, -35],[5, -40],[-20, -20],[-30, 10],[-20, 35]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "South America", "type": "continent", "color": "#3b82f6" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-80, 15],[-45, 10],[-35, -20],[-55, -55],[-75, -35],[-90, -5],[-80, 15]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "name": "India-Madagascar", "type": "continent", "color": "#f59e0b" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [55, -35],[90, -30],[95, -5],[70, 5],[50, -10],[55, -35]
         ]]
       }
     }
