@@ -66,57 +66,86 @@ const TOP_REGIONS: Record<number, { name: string; score: number }[]> = {
 // ─────────────────────────────────────────────────────────────────────────────
 // GEOJSON ADAPTER
 // Fetches /public/data/paleo/{ma}.geojson — returns null on 404/error.
-// Callers show a placeholder when null is returned.
+// Uses absolute origin-based URL to bypass any relative-path resolution issues.
+// cache: "no-store" prevents stale 404s from being reused.
 // ─────────────────────────────────────────────────────────────────────────────
 type GeoResult = { type: 'FeatureCollection'; features: unknown[] } | null;
-const _geoCache: Record<number, GeoResult | 'pending'> = {};
 
 async function loadPaleoGeoJSON(ma: number): Promise<GeoResult> {
-  const cached = _geoCache[ma];
-  if (cached !== undefined && cached !== 'pending') return cached;
-  if (cached === 'pending') {
-    // Wait briefly then return cache
-    await new Promise(r => setTimeout(r, 200));
-    return _geoCache[ma] as GeoResult;
-  }
-  _geoCache[ma] = 'pending';
+  const url =
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/data/paleo/${ma}.geojson`
+      : `/data/paleo/${ma}.geojson`;
+
+  console.log('STRATALAND Paleo fetch:', url);
+
   try {
-    const res = await fetch(`/data/paleo/${ma}.geojson`);
-    if (!res.ok) { _geoCache[ma] = null; return null; }
-    const fc = await res.json() as unknown;
-    if (typeof fc !== 'object' || fc === null || (fc as { type?: string }).type !== 'FeatureCollection') {
-      _geoCache[ma] = null; return null;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) {
+      console.error('STRATALAND Paleo fetch failed:', res.status, url);
+      return null;
     }
-    const result = fc as GeoResult;
-    _geoCache[ma] = result;
-    return result;
-  } catch {
-    _geoCache[ma] = null;
+    const data = await res.json();
+    console.log('STRATALAND Paleo loaded:', {
+      ma,
+      type: data?.type,
+      featureCount: data?.features?.length ?? 0,
+    });
+    if (data?.type !== 'FeatureCollection') return null;
+    if (!Array.isArray(data.features) || data.features.length === 0) return null;
+    return data as GeoResult;
+  } catch (err: any) {
+    console.error('STRATALAND Paleo fetch error:', err?.message ?? String(err));
     return null;
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PALEO MAP CANVAS
+// DEBUG INFO — shared between PaleoMap and PaleoExplorer via callback
 // ─────────────────────────────────────────────────────────────────────────────
-function PaleoMap({ ma, mini = false }: { ma: number; mini?: boolean }) {
+interface DebugInfo {
+  activeMa: number;
+  fetchUrl: string;
+  fetchStatus: 'IDLE' | 'FETCHING' | 'SUCCESS' | 'ERROR' | '404' | 'JSON_INVALID' | 'FEATURE_COUNT_0';
+  featureCount: number;
+  renderStatus: 'IDLE' | 'RENDERED' | 'BOUNDS_INVALID' | 'RENDER_FAILED';
+  errorMessage: string;
+}
+
+const EMPTY_DEBUG: DebugInfo = {
+  activeMa: 0, fetchUrl: '', fetchStatus: 'IDLE',
+  featureCount: 0, renderStatus: 'IDLE', errorMessage: '',
+};
+// Two-effect architecture:
+//   Effect 1 (deps=[]) — creates the Leaflet map instance once, never recreated.
+//   Effect 2 (deps=[ma]) — clears old layers, fetches GeoJSON, renders new layer.
+// This avoids the init-guard race that caused layers not to show.
+// ─────────────────────────────────────────────────────────────────────────────
+function PaleoMap({ ma, mini = false, onDebug }: {
+  ma: number;
+  mini?: boolean;
+  onDebug?: (info: Partial<DebugInfo>) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef       = useRef<unknown>(null);
-  const initDone     = useRef(false);
-  const [mapStatus, setMapStatus] = useState<'loading'|'ready'|'placeholder'>('loading');
+  const mapRef       = useRef<any>(null);
+  const layersRef    = useRef<any[]>([]);
+  const [mapReady, setMapReady]   = useState(false);
+  const [mapStatus, setMapStatus] = useState<'loading'|'ready'|'no-data'|'no-features'|'bad-bounds'|'error'>('loading');
+  const [errorMsg,  setErrorMsg]  = useState('');
 
   const period    = getPeriod(ma);
   const isPresent = ma === 0;
 
+  // ── Effect 1: create map once ──────────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current || initDone.current) return;
-    initDone.current = true;
+    if (!containerRef.current || mapRef.current) return;
     let cancelled = false;
 
     (async () => {
       const L = (await import('leaflet')).default;
       if (cancelled || !containerRef.current) return;
 
+      // Inject Leaflet CSS once
       if (!document.getElementById('leaflet-css-paleo')) {
         const link = document.createElement('link');
         link.id = 'leaflet-css-paleo';
@@ -124,84 +153,204 @@ function PaleoMap({ ma, mini = false }: { ma: number; mini?: boolean }) {
         link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
         document.head.appendChild(link);
       }
-      delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
+      delete (L.Icon.Default.prototype as any)._getIconUrl;
       L.Icon.Default.mergeOptions({ iconRetinaUrl: '', iconUrl: '', shadowUrl: '' });
 
+      const initialPeriod = getPeriod(ma);
       const map = L.map(containerRef.current!, {
-        center: period.center, zoom: period.zoom,
-        zoomControl: !mini, attributionControl: false,
-        dragging: !mini, scrollWheelZoom: !mini,
-        doubleClickZoom: !mini, keyboard: !mini, touchZoom: !mini,
-        minZoom: 1, maxZoom: isPresent ? 10 : 5,
+        center: initialPeriod.center,
+        zoom:   initialPeriod.zoom,
+        zoomControl:      !mini,
+        attributionControl: false,
+        dragging:         !mini,
+        scrollWheelZoom:  !mini,
+        doubleClickZoom:  !mini,
+        keyboard:         !mini,
+        touchZoom:        !mini,
+        minZoom: 1,
+        maxZoom: 10,
       });
       mapRef.current = map;
+      if (!cancelled) setMapReady(true);
+    })().catch(err => {
+      console.error('[PaleoMap] Map init error:', err);
+    });
 
-      if (isPresent) {
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+      setMapReady(false);
+      setMapStatus('loading');
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Effect 2: swap layers when ma changes ─────────────────────────────────
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+    const map = mapRef.current;
+    let cancelled = false;
+
+    (async () => {
+      const L = (await import('leaflet')).default;
+      if (cancelled) return;
+
+      // Clear previous data layers
+      layersRef.current.forEach(l => { try { map.removeLayer(l); } catch {} });
+      layersRef.current = [];
+
+      setMapStatus('loading');
+      setErrorMsg('');
+
+      const p = getPeriod(ma);
+
+      if (ma === 0) {
+        // Present Day: real tiles + Natural Earth outlines
+        // Remove any existing tile layers first
+        map.eachLayer((l: any) => { try { map.removeLayer(l); } catch {} });
+
         L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
           subdomains: 'abcd', maxZoom: 19,
         }).addTo(map);
         (map.getPanes().tilePane as HTMLElement).style.filter =
           'hue-rotate(195deg) saturate(0.9) brightness(0.72) contrast(1.15)';
+
+        map.flyTo(p.center, p.zoom, { duration: 0.8 });
+
         try {
           const [topoRes, { feature }] = await Promise.all([
             fetch('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json'),
             import('topojson-client'),
           ]);
-          if (!cancelled) {
-            const topo = await topoRes.json() as Parameters<typeof feature>[0];
-            L.geoJSON(feature(topo, (topo as Record<string, unknown> & { objects: { countries: Parameters<typeof feature>[1] } }).objects.countries) as Parameters<typeof L.geoJSON>[0], {
-              style: { color: '#00eaff', weight: 1, opacity: 0.55, fill: false },
-            }).addTo(map);
-          }
-        } catch { /* tile layer still shows */ }
-        if (!cancelled) setMapStatus('ready');
-      } else {
-        const container = map.getContainer() as HTMLElement;
-        container.style.background = period.oceanColor;
-        (map.getPanes().mapPane as HTMLElement).style.background = period.oceanColor;
+          if (cancelled) return;
+          const topo = await topoRes.json();
+          const outline = L.geoJSON(
+            feature(topo, topo.objects.countries) as any,
+            { style: { color: '#00eaff', weight: 1, opacity: 0.55, fill: false } }
+          ).addTo(map);
+          layersRef.current.push(outline);
+        } catch { /* tiles still show */ }
 
-        const fc = await loadPaleoGeoJSON(ma);
+        if (!cancelled) setMapStatus('ready');
+
+      } else {
+        // Paleo period: fetch GeoJSON via loadPaleoGeoJSON (absolute URL, no-cache)
+        const container = map.getContainer() as HTMLElement;
+        container.style.background = p.oceanColor;
+        (map.getPanes().mapPane as HTMLElement).style.background = p.oceanColor;
+
+        // Remove any tile layers left over from Present Day
+        map.eachLayer((l: any) => {
+          if (l.options && (l.options.subdomains !== undefined || l._url !== undefined)) {
+            try { map.removeLayer(l); } catch {}
+          }
+        });
+
+        // Capture ma at effect entry so the log reflects which period was requested
+        const activeMa = ma;
+        const fetchUrl =
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/data/paleo/${activeMa}.geojson`
+            : `/data/paleo/${activeMa}.geojson`;
+
+        onDebug?.({ activeMa, fetchUrl, fetchStatus: 'FETCHING', featureCount: 0, renderStatus: 'IDLE', errorMessage: '' });
+
+        const data = await loadPaleoGeoJSON(activeMa);
         if (cancelled) return;
-        if (fc) {
-          L.geoJSON(fc as Parameters<typeof L.geoJSON>[0], {
-            style: { color: '#4a7030', weight: 1.2, fillColor: '#2d4a1a', fillOpacity: 0.88, opacity: 0.9 },
-          }).addTo(map);
-          setMapStatus('ready');
-        } else {
-          setMapStatus('placeholder');
+
+        if (!data) {
+          const msg = `Fetch failed: /data/paleo/${activeMa}.geojson`;
+          onDebug?.({ fetchStatus: 'ERROR', renderStatus: 'IDLE', errorMessage: msg });
+          map.flyTo(p.center, p.zoom, { duration: 0.8 });
+          setErrorMsg(msg);
+          setMapStatus('no-data');
+          return;
+        }
+
+        onDebug?.({ fetchStatus: 'SUCCESS', featureCount: (data as any).features.length });
+
+        try {
+          const layer = L.geoJSON(data as any, {
+            style: {
+              color:       '#64ffda',
+              weight:      2,
+              fillColor:   '#7CFF4F',
+              fillOpacity: 0.45,
+            },
+          });
+          layer.addTo(map);
+          layersRef.current.push(layer);
+
+          const bounds = layer.getBounds();
+          if (bounds.isValid()) {
+            map.fitBounds(bounds, { padding: [40, 40] });
+            console.log('STRATALAND Paleo rendered:', { ma: activeMa, boundsValid: true });
+            onDebug?.({ renderStatus: 'RENDERED', errorMessage: '' });
+            setMapStatus('ready');
+          } else {
+            console.warn('[PaleoMap] Layer bounds are invalid — flying to default centre');
+            map.flyTo(p.center, p.zoom, { duration: 0.8 });
+            onDebug?.({ renderStatus: 'BOUNDS_INVALID', errorMessage: 'GeoJSON loaded but bounds are invalid.' });
+            setMapStatus('bad-bounds');
+          }
+        } catch (err: any) {
+          const msg = `GeoJSON loaded but render failed: ${err?.message ?? String(err)}`;
+          console.error('[PaleoMap] Render error:', msg);
+          onDebug?.({ renderStatus: 'RENDER_FAILED', errorMessage: msg });
+          map.flyTo(p.center, p.zoom, { duration: 0.8 });
+          setErrorMsg(msg);
+          setMapStatus('error');
         }
       }
-    })().catch(() => { if (!cancelled) setMapStatus('placeholder'); });
-
-    return () => {
-      cancelled = true;
-      if (mapRef.current) {
-        (mapRef.current as { remove(): void }).remove();
-        mapRef.current = null;
+    })().catch(err => {
+      if (!cancelled) {
+        const msg = err?.message ?? String(err);
+        console.error('[PaleoMap] Layer effect error:', msg);
+        setErrorMsg(msg);
+        setMapStatus('error');
       }
-      initDone.current = false;
-      setMapStatus('loading');
-    };
-  }, [ma]); // eslint-disable-line react-hooks/exhaustive-deps
+    });
+
+    return () => { cancelled = true; };
+  }, [mapReady, ma]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Status message for non-ready states ───────────────────────────────────
+  const statusMsg: Record<string, { title: string; body: string; color: string }> = {
+    'no-data':    { title: 'DATA NOT YET LOADED', color: '#f6b93b',
+                    body: errorMsg || `GeoJSON not found: /data/paleo/${ma}.geojson` },
+    'no-features':{ title: 'EMPTY DATASET',       color: '#f6b93b',
+                    body: 'GeoJSON loaded but contains no features.' },
+    'bad-bounds': { title: 'BOUNDS UNAVAILABLE',  color: '#94a3b8',
+                    body: 'GeoJSON loaded but bounds are invalid — check coordinate system.' },
+    'error':      { title: 'LOAD ERROR',           color: '#ef4444',
+                    body: errorMsg || 'An unexpected error occurred.' },
+  };
+  const overlay = statusMsg[mapStatus];
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%', background: period.oceanColor }} />
-      {mapStatus === 'placeholder' && !mini && (
+
+      {/* Placeholder / error overlay */}
+      {overlay && !mini && (
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', background: `${period.oceanColor}cc` }}>
           <div style={{ background: 'rgba(6,11,20,0.9)', border: '1px solid rgba(0,234,255,0.2)', borderRadius: 12, padding: '28px 36px', textAlign: 'center', maxWidth: 440 }}>
-            <div style={{ fontSize: 9, color: '#f6b93b', letterSpacing: '1.5px', fontWeight: 700, marginBottom: 8 }}>DATA NOT YET LOADED</div>
+            <div style={{ fontSize: 9, color: overlay.color, letterSpacing: '1.5px', fontWeight: 700, marginBottom: 8 }}>{overlay.title}</div>
             <div style={{ fontSize: 14, fontWeight: 700, color: '#e2e8f0', marginBottom: 10 }}>{period.label} — {period.ma} Ma</div>
-            <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.7 }}>
-              Prototype reconstruction — awaiting GPlates / PALEOMAP GeoJSON export.
-            </div>
-            <div style={{ marginTop: 14, fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>
-              Expected: /data/paleo/{period.ma}.geojson
-            </div>
+            <div style={{ fontSize: 12, color: '#64748b', lineHeight: 1.7 }}>{overlay.body}</div>
+            {mapStatus === 'no-data' && (
+              <div style={{ marginTop: 14, fontSize: 10, color: '#334155', fontFamily: 'monospace' }}>
+                Expected: /data/paleo/{period.ma}.geojson
+              </div>
+            )}
           </div>
         </div>
       )}
-      {!mini && mapStatus !== 'loading' && (
+
+      {/* Period badge */}
+      {!mini && mapStatus === 'ready' && (
         <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 600, padding: '4px 12px', background: 'rgba(6,10,20,0.9)', border: '1px solid rgba(0,234,255,0.2)', borderRadius: 6, fontSize: 10, color: '#00eaff', fontFamily: 'Inter,sans-serif', letterSpacing: 0.4 }}>
           {ma === 0 ? 'PRESENT DAY' : `${ma} Ma · ${period.label.toUpperCase()}`}
         </div>
@@ -235,15 +384,32 @@ function ProspGauge({ score, level }: { score: number; level: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 export default function PaleoExplorer() {
   const [selectedMa, setSelectedMa] = useState<number>(120);
+  const [debug, setDebug] = useState<DebugInfo>({ ...EMPTY_DEBUG, activeMa: 120 });
+
+  const handleDebug = useCallback((info: Partial<DebugInfo>) => {
+    setDebug(prev => ({ ...prev, ...info }));
+  }, []);
 
   // handleSliderChange uses sliderToMa and MA_STOPS — both declared at module level above
   const handleSliderChange = useCallback((e: { target: { value: string } }) => {
     setSelectedMa(sliderToMa(Number(e.target.value)));
   }, []);
 
+  const forceLoad120 = useCallback(() => {
+    setDebug({ ...EMPTY_DEBUG, activeMa: 120 });
+    setSelectedMa(120);
+  }, []);
+
   const period    = getPeriod(selectedMa);
   const regions   = TOP_REGIONS[selectedMa] ?? TOP_REGIONS[0];
   const sliderPct = (750 - selectedMa) / 750;
+
+  // Status colour for debug panel
+  const statusColor = (s: string) => {
+    if (s === 'SUCCESS' || s === 'RENDERED') return '#25f5a6';
+    if (s === 'FETCHING' || s === 'IDLE')    return '#94a3b8';
+    return '#ef4444';
+  };
 
   return (
     <div style={{ width: '100%', height: '100%', background: '#060b14', color: '#e2e8f0', fontFamily: 'Inter,sans-serif', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -304,7 +470,44 @@ export default function PaleoExplorer() {
 
           {/* Map */}
           <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 280 }}>
-            <PaleoMap ma={selectedMa} />
+            <PaleoMap ma={selectedMa} onDebug={handleDebug} />
+
+            {/* ── DEBUG PANEL (top-left, always visible) ── */}
+            <div style={{
+              position: 'absolute', top: 12, left: 12, zIndex: 900,
+              background: 'rgba(2,6,14,0.96)', border: '1px solid rgba(0,234,255,0.35)',
+              borderRadius: 8, padding: '10px 14px', minWidth: 280,
+              fontFamily: 'monospace', fontSize: 11,
+              backdropFilter: 'blur(8px)',
+            }}>
+              <div style={{ fontSize: 9, color: '#00eaff', letterSpacing: '1.4px', fontWeight: 700, marginBottom: 8 }}>
+                PALEO DEBUG
+              </div>
+              {([
+                ['activeMa',     String(debug.activeMa)],
+                ['fetchUrl',     debug.fetchUrl || '—'],
+                ['fetchStatus',  debug.fetchStatus],
+                ['featureCount', String(debug.featureCount)],
+                ['renderStatus', debug.renderStatus],
+                ...(debug.errorMessage ? [['error', debug.errorMessage]] : []),
+              ] as [string, string][]).map(([k, v]) => (
+                <div key={k} style={{ display: 'flex', gap: 8, marginBottom: 4, lineHeight: 1.4 }}>
+                  <span style={{ color: '#475569', minWidth: 96, flexShrink: 0 }}>{k}</span>
+                  <span style={{ color: statusColor(v), wordBreak: 'break-all' }}>{v}</span>
+                </div>
+              ))}
+              <button
+                onClick={forceLoad120}
+                style={{
+                  marginTop: 8, width: '100%', padding: '6px 0',
+                  background: 'rgba(0,234,255,0.12)', border: '1px solid rgba(0,234,255,0.45)',
+                  borderRadius: 5, color: '#00eaff', fontSize: 11,
+                  fontFamily: 'Inter,sans-serif', cursor: 'pointer', letterSpacing: 0.3,
+                }}
+              >
+                Force Load 120
+              </button>
+            </div>
             {/* Legend */}
             <div style={{ position: 'absolute', bottom: 16, left: 16, zIndex: 500, background: 'rgba(6,11,20,0.92)', border: '1px solid rgba(0,234,255,0.18)', borderRadius: 8, padding: '10px 14px', backdropFilter: 'blur(6px)' }}>
               <div style={{ fontSize: 9, color: '#00eaff', letterSpacing: '1.3px', fontWeight: 700, marginBottom: 8 }}>MAP LEGEND</div>
