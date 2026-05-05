@@ -65,39 +65,54 @@ const TOP_REGIONS: Record<number, { name: string; score: number }[]> = {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GEOJSON ADAPTER
-// Fetches /public/data/paleo/{ma}.geojson — returns null on 404/error.
-// Uses absolute origin-based URL to bypass any relative-path resolution issues.
-// cache: "no-store" prevents stale 404s from being reused.
+// Fetches paleo GeoJSON.
+// PRIMARY:  /api/paleo/{ma}  — Next.js API route that reads directly from
+//   public/data/paleo/{ma}.geojson via the filesystem. Works regardless of
+//   static-file serving configuration or server restart timing.
+// FALLBACK: /data/paleo/{ma}.geojson — standard Next.js public folder path.
+//   Useful in production after a full build.
+// cache: "no-store" on primary so a cold 404 never gets stuck in browser cache.
 // ─────────────────────────────────────────────────────────────────────────────
 type GeoResult = { type: 'FeatureCollection'; features: unknown[] } | null;
 
 async function loadPaleoGeoJSON(ma: number): Promise<GeoResult> {
-  const url =
-    typeof window !== 'undefined'
-      ? `${window.location.origin}/data/paleo/${ma}.geojson`
-      : `/data/paleo/${ma}.geojson`;
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : '';
 
-  console.log('STRATALAND Paleo fetch:', url);
+  // Try API route first — bypasses static file serving entirely
+  const apiUrl     = `${origin}/api/paleo/${ma}`;
+  const staticUrl  = `${origin}/data/paleo/${ma}.geojson`;
 
-  try {
-    const res = await fetch(url, { cache: 'no-store' });
-    if (!res.ok) {
-      console.error('STRATALAND Paleo fetch failed:', res.status, url);
-      return null;
+  console.log('STRATALAND Paleo fetch:', apiUrl);
+
+  for (const url of [apiUrl, staticUrl]) {
+    try {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        console.warn(`STRATALAND Paleo fetch ${res.status}:`, url);
+        continue; // try fallback
+      }
+      const data = await res.json();
+      console.log('STRATALAND Paleo loaded:', {
+        ma,
+        url,
+        type: data?.type,
+        featureCount: data?.features?.length ?? 0,
+      });
+      if (data?.type !== 'FeatureCollection') {
+        console.error('STRATALAND Paleo: not a FeatureCollection:', data?.type);
+        return null;
+      }
+      if (!Array.isArray(data.features) || data.features.length === 0) {
+        console.error('STRATALAND Paleo: 0 features in', url);
+        return null;
+      }
+      return data as GeoResult;
+    } catch (err: any) {
+      console.error('STRATALAND Paleo fetch error:', url, err?.message ?? String(err));
     }
-    const data = await res.json();
-    console.log('STRATALAND Paleo loaded:', {
-      ma,
-      type: data?.type,
-      featureCount: data?.features?.length ?? 0,
-    });
-    if (data?.type !== 'FeatureCollection') return null;
-    if (!Array.isArray(data.features) || data.features.length === 0) return null;
-    return data as GeoResult;
-  } catch (err: any) {
-    console.error('STRATALAND Paleo fetch error:', err?.message ?? String(err));
-    return null;
   }
+  return null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -252,8 +267,8 @@ function PaleoMap({ ma, mini = false, onDebug }: {
         const activeMa = ma;
         const fetchUrl =
           typeof window !== 'undefined'
-            ? `${window.location.origin}/data/paleo/${activeMa}.geojson`
-            : `/data/paleo/${activeMa}.geojson`;
+            ? `${window.location.origin}/api/paleo/${activeMa}`
+            : `/api/paleo/${activeMa}`;
 
         onDebug?.({ activeMa, fetchUrl, fetchStatus: 'FETCHING', featureCount: 0, renderStatus: 'IDLE', errorMessage: '' });
 
